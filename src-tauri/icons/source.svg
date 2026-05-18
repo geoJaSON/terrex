@@ -1,0 +1,29 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="180" fill="#070707"/>
+  <rect x="40" y="40" width="944" height="944" rx="150" fill="none" stroke="#114411" stroke-width="8"/>
+
+  <!-- Topographic contour rings (terrain) -->
+  <g fill="none" stroke="#1f8a1f" stroke-width="14" stroke-linejoin="round">
+    <path d="M512 250
+             C 690 250, 824 360, 824 512
+             C 824 664, 690 774, 512 774
+             C 334 774, 200 664, 200 512
+             C 200 360, 334 250, 512 250 Z"/>
+  </g>
+  <g fill="none" stroke="#2bbb2b" stroke-width="16" stroke-linejoin="round">
+    <path d="M512 340
+             C 626 340, 712 416, 712 512
+             C 712 608, 626 684, 512 684
+             C 398 684, 312 608, 312 512
+             C 312 416, 398 340, 512 340 Z"/>
+  </g>
+
+  <!-- Peak mark -->
+  <g fill="none" stroke="#33ff33" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M300 660 L 452 392 L 560 560 L 636 452 L 760 660 Z"/>
+  </g>
+  <circle cx="452" cy="392" r="26" fill="#33ff33"/>
+
+  <!-- Baseline / grid tick -->
+  <line x1="240" y1="724" x2="784" y2="724" stroke="#33ff33" stroke-width="14" stroke-linecap="round"/>
+</svg>
