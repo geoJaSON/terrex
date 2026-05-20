@@ -1,9 +1,12 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Layer } from "../../types/layer";
+import type { Feature } from "geojson";
 
 interface ColumnStatsProps {
   layer: Layer;
   attribute: string;
+  filteredFeatures: Feature[];
+  selectedFeatures: Feature[];
   onClose: () => void;
 }
 
@@ -20,12 +23,30 @@ interface Stats {
   topValues?: { value: string; count: number }[];
 }
 
-export function ColumnStats({ layer, attribute, onClose }: ColumnStatsProps) {
+export function ColumnStats({
+  layer,
+  attribute,
+  filteredFeatures,
+  selectedFeatures,
+  onClose,
+}: ColumnStatsProps) {
+  const [scope, setScope] = useState<"all" | "filtered" | "selected">(() => {
+    if (selectedFeatures.length > 0) return "selected";
+    if (filteredFeatures.length < layer.data.features.length) return "filtered";
+    return "all";
+  });
+
+  const activeFeatures = useMemo(() => {
+    if (scope === "selected") return selectedFeatures;
+    if (scope === "filtered") return filteredFeatures;
+    return layer.data.features;
+  }, [scope, layer, filteredFeatures, selectedFeatures]);
+
   const stats = useMemo<Stats>(() => {
     const values: unknown[] = [];
     let nullCount = 0;
 
-    for (const f of layer.data.features) {
+    for (const f of activeFeatures) {
       const v = f.properties?.[attribute];
       if (v === null || v === undefined || v === "") {
         nullCount++;
@@ -72,7 +93,7 @@ export function ColumnStats({ layer, attribute, onClose }: ColumnStatsProps) {
       .map(([value, count]) => ({ value, count }));
 
     return result;
-  }, [layer, attribute]);
+  }, [activeFeatures, attribute]);
 
   const fmt = (n: number | undefined) =>
     n === undefined ? "—" : Number.isInteger(n) ? n.toLocaleString() : n.toFixed(4);
@@ -82,6 +103,23 @@ export function ColumnStats({ layer, attribute, onClose }: ColumnStatsProps) {
       <div className="column-stats__header">
         <span className="column-stats__title">{attribute}</span>
         <button className="icon-btn icon-btn--sm" onClick={onClose}>✕</button>
+      </div>
+
+      <div style={{ marginBottom: "var(--space-2)" }}>
+        <select
+          className="filter-bar__select"
+          value={scope}
+          onChange={(e) => setScope(e.target.value as any)}
+          style={{ width: "100%", fontSize: "var(--font-size-xs)", height: "24px", padding: "0 var(--space-1)" }}
+        >
+          <option value="all">Scope: All ({layer.data.features.length})</option>
+          {filteredFeatures.length < layer.data.features.length && (
+            <option value="filtered">Scope: Filtered ({filteredFeatures.length})</option>
+          )}
+          {selectedFeatures.length > 0 && (
+            <option value="selected">Scope: Selected ({selectedFeatures.length})</option>
+          )}
+        </select>
       </div>
 
       <div className="column-stats__grid">
@@ -117,7 +155,7 @@ export function ColumnStats({ layer, attribute, onClose }: ColumnStatsProps) {
             <span className="column-stats__stat-label">Median</span>
             <span className="column-stats__stat-value">{fmt(stats.median)}</span>
           </div>
-          <div className="column-stats__stat">
+          <div className="column-stats__stat" style={{ gridColumn: "span 2", textAlign: "left" }}>
             <span className="column-stats__stat-label">Sum</span>
             <span className="column-stats__stat-value">{fmt(stats.sum)}</span>
           </div>
@@ -125,15 +163,15 @@ export function ColumnStats({ layer, attribute, onClose }: ColumnStatsProps) {
       )}
 
       {stats.topValues && stats.topValues.length > 0 && (
-        <div className="column-stats__top-values">
+        <div className="column-stats__top-values" style={{ marginTop: "var(--space-2)" }}>
           <div className="column-stats__section-label">Top Values</div>
           {stats.topValues.map((tv) => (
             <div key={tv.value} className="column-stats__top-row">
-              <span className="column-stats__top-value">{tv.value}</span>
+              <span className="column-stats__top-value" title={tv.value}>{tv.value}</span>
               <div className="column-stats__top-bar-wrapper">
                 <div
                   className="column-stats__top-bar"
-                  style={{ width: `${(tv.count / stats.count) * 100}%` }}
+                  style={{ width: `${stats.count > 0 ? (tv.count / stats.count) * 100 : 0}%` }}
                 />
               </div>
               <span className="column-stats__top-count">{tv.count}</span>

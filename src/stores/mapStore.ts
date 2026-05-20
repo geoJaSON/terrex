@@ -53,6 +53,7 @@ interface MapState {
   // Replace a layer's features in place (used by online-layer refresh),
   // recomputing featureCount / extent / attributes and keeping style & order.
   replaceLayerData: (id: string, data: FeatureCollection<Geometry, GeoJsonProperties>) => void;
+  setLayerLoading: (id: string, loading: boolean) => void;
 
   // Selection
   selectedFeatureIds: Set<number>;
@@ -85,6 +86,7 @@ interface MapState {
   // Editing
   updateFeatureProperty: (layerId: string, featureId: number, attr: string, value: unknown) => void;
   batchUpdateFeatureProperty: (layerId: string, featureIds: number[], attr: string, value: unknown) => void;
+  batchUpdateFeatureProperties: (layerId: string, featureIdValueMap: Record<number, unknown>, attr: string) => void;
   editHistory: EditEntry[];
   editHistoryIndex: number;
   undo: () => void;
@@ -219,6 +221,7 @@ export const useMapStore = create<MapState>((set, get) => ({
                 extent,
                 attributes: Array.from(attrs).sort(),
                 geometryType: geomType,
+                loading: false,
               }
             : l
         ),
@@ -226,6 +229,10 @@ export const useMapStore = create<MapState>((set, get) => ({
         selectedFeatureIds: state.activeLayerId === id ? new Set<number>() : state.selectedFeatureIds,
       };
     }),
+  setLayerLoading: (id, loading) =>
+    set((state) => ({
+      layers: state.layers.map((l) => (l.id === id ? { ...l, loading } : l)),
+    })),
 
   // Selection
   selectedFeatureIds: new Set(),
@@ -311,6 +318,24 @@ export const useMapStore = create<MapState>((set, get) => ({
           if (!idSet.has(f.id as number)) return f;
           entries.push({ layerId, featureId: f.id as number, attribute: attr, oldValue: f.properties?.[attr], newValue: value });
           return { ...f, properties: { ...f.properties, [attr]: value } } as Feature<Geometry, GeoJsonProperties>;
+        });
+        return { ...l, data: { ...l.data, features } };
+      });
+      const newHistory = [...state.editHistory.slice(0, state.editHistoryIndex + 1), ...entries];
+      return { layers, editHistory: newHistory, editHistoryIndex: newHistory.length - 1 };
+    });
+  },
+  batchUpdateFeatureProperties: (layerId, featureIdValueMap, attr) => {
+    set((state) => {
+      const entries: EditEntry[] = [];
+      const layers = state.layers.map((l) => {
+        if (l.id !== layerId) return l;
+        const features = l.data.features.map((f) => {
+          const fid = f.id as number;
+          if (!(fid in featureIdValueMap)) return f;
+          const newValue = featureIdValueMap[fid];
+          entries.push({ layerId, featureId: fid, attribute: attr, oldValue: f.properties?.[attr], newValue });
+          return { ...f, properties: { ...f.properties, [attr]: newValue } } as Feature<Geometry, GeoJsonProperties>;
         });
         return { ...l, data: { ...l.data, features } };
       });

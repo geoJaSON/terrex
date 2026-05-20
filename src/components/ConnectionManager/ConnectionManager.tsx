@@ -6,9 +6,8 @@ import {
 } from "../../services/credentialCache";
 import { useConnectionStore, type SavedConnection, type ConnectionType, type AuthType } from "../../stores/connectionStore";
 import { useMapStore } from "../../stores/mapStore";
-import { fetchOnlineLayer } from "../../services/onlineSources";
+import { fetchOnlineLayer, establishOnlineConnection } from "../../services/onlineSources";
 import type { Layer } from "../../types/layer";
-import bbox from "@turf/bbox";
 
 export function ConnectionManager() {
   const {
@@ -143,34 +142,24 @@ export function ConnectionManager() {
     setError(null);
     setIsLoading(true);
     try {
-      const result = await fetchOnlineLayer(conn, { credentials: creds });
+      // 1. Quick handshake
+      const meta = await establishOnlineConnection(conn, { credentials: creds });
 
-      const layerData = result.data;
-      const attributes =
-        layerData.features.length > 0 && layerData.features[0].properties
-          ? Object.keys(layerData.features[0].properties)
-          : [];
+      const layerId = `layer_${Date.now()}`;
 
-      // Determine geometry type
-      let geomType: any = "Unknown";
-      for (const f of layerData.features) {
-        if (f.geometry && f.geometry.type) {
-          geomType = f.geometry.type;
-          break;
-        }
-      }
-
+      // 2. Add loading layer to map store
       const layer: Layer = {
-        id: `layer_${Date.now()}`,
-        name: result.name || conn.name,
+        id: layerId,
+        name: meta.name || conn.name,
         source: "online",
-        data: layerData,
-        geometryType: geomType,
-        attributes,
-        featureCount: layerData.features.length,
-        extent: layerData.features.length > 0 ? (bbox(layerData) as [number, number, number, number]) : null,
+        data: { type: "FeatureCollection", features: [] },
+        geometryType: meta.geometryType || "Point",
+        attributes: [],
+        featureCount: 0,
+        extent: null,
         connection: conn,
         visible: true,
+        loading: true, // Mark layer as loading!
         style: {
           color: getNextColor(),
           opacity: 0.8,
@@ -181,11 +170,23 @@ export function ConnectionManager() {
       };
 
       addLayer(layer);
-      handleClose();
+      handleClose(); // Close connection dialog immediately!
+
+      // 3. Background fetch (non-blocking)
+      (async () => {
+        try {
+          const result = await fetchOnlineLayer(conn, { credentials: creds });
+          useMapStore.getState().replaceLayerData(layerId, result.data);
+        } catch (err: any) {
+          console.error(`Background layer load failed: ${err.message || err}`);
+          useMapStore.getState().setLayerLoading(layerId, false);
+          alert(`Background load failed for layer "${meta.name || conn.name}":\n${err.message || err}`);
+        }
+      })();
+
     } catch (err: any) {
-      // Drop cached credentials on failure so the next click re-prompts.
       if (conn.authType !== "none") clearCachedCredentials(conn.id);
-      setError(err.message || "Failed to load layer.");
+      setError(err.message || "Failed to establish connection.");
     } finally {
       setIsLoading(false);
     }

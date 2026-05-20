@@ -162,11 +162,11 @@ export function LayerItem({
         </span>
 
         <span className="layer-item__count">
-          {layer.featureCount.toLocaleString()}
+          {layer.loading ? "..." : layer.featureCount.toLocaleString()}
         </span>
 
-        <span className="layer-item__source-badge" title={isRefreshing ? "Refreshing…" : undefined}>
-          {isRefreshing ? "⏳" : layer.source === "local" ? "📁" : "🌐"}
+        <span className="layer-item__source-badge" title={layer.loading || isRefreshing ? "Loading…" : undefined}>
+          {layer.loading || isRefreshing ? "⏳" : layer.source === "local" ? "📁" : "🌐"}
         </span>
 
         <button
@@ -196,20 +196,20 @@ export function LayerItem({
             className="context-menu"
             style={{ left: contextPos.x, top: contextPos.y }}
           >
-            <button className="context-menu__item" onClick={handleZoomToExtent}>
+            <button className="context-menu__item" onClick={handleZoomToExtent} disabled={layer.loading}>
               🔍 Zoom to Extent
             </button>
             {hasSelection && (
-              <button className="context-menu__item" onClick={handleZoomToSelected}>
+              <button className="context-menu__item" onClick={handleZoomToSelected} disabled={layer.loading}>
                 🎯 Zoom to Selected ({selectedFeatureIds.size})
               </button>
             )}
             {layer.source === "online" && layer.connection && (
-              <button className="context-menu__item" onClick={handleRefresh}>
+              <button className="context-menu__item" onClick={handleRefresh} disabled={layer.loading}>
                 🔄 Refresh Data
               </button>
             )}
-            <button className="context-menu__item" onClick={handleOpenTable}>
+            <button className="context-menu__item" onClick={handleOpenTable} disabled={layer.loading}>
               📊 Open Attribute Table
             </button>
             <button

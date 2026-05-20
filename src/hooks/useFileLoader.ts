@@ -221,9 +221,113 @@ async function parseCSV(path: string): Promise<FeatureCollection> {
   return { type: "FeatureCollection", features };
 }
 
+function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 // ── Main file loader hook ──
 export function useFileLoader() {
   const { addLayer, getNextColor } = useMapStore();
+
+  const loadBrowserFile = useCallback(async (file: File): Promise<Layer> => {
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase();
+      let geojson: FeatureCollection<Geometry, GeoJsonProperties>;
+
+      if (ext === "zip") {
+        const buffer = await file.arrayBuffer();
+        const result = await shp(buffer);
+        geojson = Array.isArray(result) ? (result[0] as FeatureCollection) : (result as FeatureCollection);
+      } else if (ext === "kml") {
+        const content = await file.text();
+        const dom = new DOMParser().parseFromString(content, "text/xml");
+        geojson = kmlToGeoJSON(dom) as FeatureCollection;
+      } else if (ext === "csv") {
+        const content = await file.text();
+        const parsed = Papa.parse<Record<string, string>>(content, {
+          header: true,
+          skipEmptyLines: true,
+          dynamicTyping: true,
+        });
+        
+        const headers = parsed.meta.fields || [];
+        const latCol = findColumnMatch(headers, LAT_PATTERNS);
+        const lngCol = findColumnMatch(headers, LNG_PATTERNS);
+        
+        if (!latCol || !lngCol) {
+          throw new Error(
+            `Could not detect latitude/longitude columns. Found headers: ${headers.join(", ")}.`
+          );
+        }
+        
+        const features: Feature[] = [];
+        for (const row of parsed.data) {
+          const lat = parseFloat(String(row[latCol]));
+          const lng = parseFloat(String(row[lngCol]));
+          if (isNaN(lat) || isNaN(lng)) continue;
+          
+          const properties: GeoJsonProperties = {};
+          for (const [key, value] of Object.entries(row)) {
+            if (key !== latCol && key !== lngCol) properties[key] = value;
+          }
+          
+          features.push({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [lng, lat] },
+            properties,
+          });
+        }
+        geojson = { type: "FeatureCollection", features };
+      } else {
+        // geojson / json
+        const content = await file.text();
+        const parsed = JSON.parse(content);
+        if (parsed.type === "Feature") {
+          geojson = { type: "FeatureCollection", features: [parsed] };
+        } else if (parsed.type !== "FeatureCollection") {
+          geojson = {
+            type: "FeatureCollection",
+            features: [{ type: "Feature", geometry: parsed, properties: {} }],
+          };
+        } else {
+          geojson = parsed;
+        }
+      }
+
+      if (!geojson.features || !Array.isArray(geojson.features)) {
+        throw new Error("Invalid data: no features found after parsing");
+      }
+
+      geojson.features = geojson.features.map((f, i) => ({ ...f, id: i }));
+
+      const color = getNextColor();
+      const layer: Layer = {
+        id: generateId(),
+        name: file.name.replace(/\.[^.]+$/, ""),
+        fileName: file.name,
+        geometryType: detectGeometryType(geojson),
+        source: "local",
+        visible: true,
+        style: {
+          color,
+          opacity: 0.7,
+          strokeColor: color,
+          strokeWidth: 2,
+          pointRadius: 6,
+        },
+        data: geojson,
+        featureCount: geojson.features.length,
+        extent: computeExtent(geojson),
+        attributes: extractAttributes(geojson),
+      };
+
+      addLayer(layer);
+      return layer;
+    } catch (error) {
+      console.error("Failed to parse browser file:", error);
+      throw error;
+    }
+  }, [addLayer, getNextColor]);
 
   const loadFromPath = useCallback(async (filePath: string) => {
     try {
@@ -286,20 +390,52 @@ export function useFileLoader() {
   }, [addLayer, getNextColor]);
 
   const loadFile = useCallback(async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [
-        { name: "Geospatial Files", extensions: ["geojson", "json", "zip", "kml", "csv"] },
-        { name: "GeoJSON", extensions: ["geojson", "json"] },
-        { name: "Shapefile (ZIP)", extensions: ["zip"] },
-        { name: "KML", extensions: ["kml"] },
-        { name: "CSV", extensions: ["csv"] },
-        { name: "All Files", extensions: ["*"] },
-      ],
-    });
-    if (!selected) return;
-    return loadFromPath(selected as string);
-  }, [loadFromPath]);
+    if (isTauri()) {
+      try {
+        const selected = await open({
+          multiple: false,
+          filters: [
+            { name: "Geospatial Files", extensions: ["geojson", "json", "zip", "kml", "csv"] },
+            { name: "GeoJSON", extensions: ["geojson", "json"] },
+            { name: "Shapefile (ZIP)", extensions: ["zip"] },
+            { name: "KML", extensions: ["kml"] },
+            { name: "CSV", extensions: ["csv"] },
+            { name: "All Files", extensions: ["*"] },
+          ],
+        });
+        if (!selected) return;
+        return loadFromPath(selected as string);
+      } catch (err) {
+        console.warn("Tauri dialog open failed, falling back to browser input:", err);
+      }
+    }
 
-  return { loadFile, loadFromPath };
+    return new Promise<Layer | undefined>((resolve, reject) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".geojson,.json,.zip,.kml,.csv";
+      
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) {
+          resolve(undefined);
+          return;
+        }
+        try {
+          const layer = await loadBrowserFile(file);
+          resolve(layer);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      
+      input.onerror = (err) => {
+        reject(err);
+      };
+      
+      input.click();
+    });
+  }, [loadFromPath, loadBrowserFile]);
+
+  return { loadFile, loadFromPath, loadBrowserFile };
 }

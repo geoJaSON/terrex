@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use tauri::Manager;
 
 #[derive(serde::Serialize)]
 struct HttpResponse {
@@ -70,6 +71,30 @@ fn write_file(path: String, content: String) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| format!("Failed to write file '{}': {}", path, e))
 }
 
+#[tauri::command]
+fn load_connections(app: tauri::AppHandle) -> Result<String, String> {
+    let path = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?
+        .join("connections.json");
+    if !path.exists() {
+        return Ok("[]".to_string());
+    }
+    fs::read_to_string(&path).map_err(|e| format!("Failed to read connections file: {}", e))
+}
+
+#[tauri::command]
+fn save_connections(app: tauri::AppHandle, content: String) -> Result<(), String> {
+    let path = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?
+        .join("connections.json");
+    if let Some(parent) = path.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            return Err(format!("Failed to create parent directories: {}", e));
+        }
+    }
+    fs::write(&path, content).map_err(|e| format!("Failed to write connections file: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -79,7 +104,9 @@ pub fn run() {
             read_file,
             read_file_binary,
             write_file,
-            http_request
+            http_request,
+            load_connections,
+            save_connections
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

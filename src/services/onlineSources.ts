@@ -201,6 +201,95 @@ async function generateArcGISToken(
   return data.token;
 }
 
+export async function establishOnlineConnection(
+  connection: SavedConnection,
+  options?: FetchOptions
+): Promise<{ name: string; geometryType: any }> {
+  let { url, type, authType } = connection;
+  const { credentials } = options || {};
+
+  let activeToken = credentials?.token;
+  let basicHeader: string | undefined;
+  const hasBasicCreds = !!(credentials?.username && credentials?.password);
+
+  if (type === "arcgis_feature" && authType === "basic" && hasBasicCreds) {
+    try {
+      activeToken = await generateArcGISToken(url, credentials!);
+    } catch (e) {
+      if (e instanceof TokenEndpointUnavailable) {
+        basicHeader = `Basic ${btoa(`${credentials!.username}:${credentials!.password}`)}`;
+        console.warn(
+          "ArcGIS token endpoint unavailable; falling back to HTTP Basic auth.",
+          e.message
+        );
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  const headers: Record<string, string> = {};
+  if (basicHeader) {
+    headers["Authorization"] = basicHeader;
+  } else if (authType === "basic" && hasBasicCreds && type !== "arcgis_feature") {
+    headers["Authorization"] = `Basic ${btoa(`${credentials!.username}:${credentials!.password}`)}`;
+  } else if (authType === "token" && activeToken && type !== "arcgis_feature") {
+    headers["Authorization"] = `Bearer ${activeToken}`;
+  }
+
+  if (type === "arcgis_feature") {
+    headers["Referer"] = APP_REFERER;
+  }
+
+  if (type === "arcgis_feature") {
+    const metaUrl = new URL(url);
+    metaUrl.searchParams.set("f", "json");
+    if (activeToken) metaUrl.searchParams.set("token", activeToken);
+    
+    const metaRes = await backendFetch(metaUrl.toString(), { headers });
+    const metaText = metaRes.text();
+    let meta;
+    try {
+      meta = JSON.parse(metaText);
+    } catch (e) {
+      throw new Error(`Failed to read layer metadata. Server returned HTML instead of JSON. Ensure the URL is correct. Response: ${metaText.slice(0, 100)}...`);
+    }
+    
+    if (meta.error) throw new Error(meta.error.message || "ArcGIS Error");
+    
+    let geomType = "Point";
+    if (meta.geometryType) {
+      if (meta.geometryType === "esriGeometryPoint") geomType = "Point";
+      else if (meta.geometryType === "esriGeometryMultipoint") geomType = "MultiPoint";
+      else if (meta.geometryType === "esriGeometryPolyline") geomType = "LineString";
+      else if (meta.geometryType === "esriGeometryPolygon") geomType = "Polygon";
+    }
+    return {
+      name: meta.name || connection.name,
+      geometryType: geomType,
+    };
+  } else if (type === "wfs") {
+    const testUrl = new URL(url);
+    testUrl.searchParams.set("service", "WFS");
+    testUrl.searchParams.set("request", "GetCapabilities");
+    const res = await backendFetch(testUrl.toString(), { headers });
+    if (!res.ok) throw new Error(`WFS Server responded with status ${res.status}`);
+    return {
+      name: connection.name,
+      geometryType: "Point",
+    };
+  } else if (type === "geojson_url") {
+    const res = await backendFetch(url, { headers });
+    if (!res.ok) throw new Error(`Server responded with status ${res.status}`);
+    return {
+      name: connection.name,
+      geometryType: "Point",
+    };
+  }
+
+  throw new Error(`Unsupported connection type: ${type}`);
+}
+
 export async function fetchOnlineLayer(
   connection: SavedConnection,
   options?: FetchOptions

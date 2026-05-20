@@ -10,12 +10,20 @@ import { FilterBar } from "./components/FilterBar/FilterBar";
 import { EditPanel } from "./components/EditPanel/EditPanel";
 import { ConnectionManager } from "./components/ConnectionManager/ConnectionManager";
 import { useMapStore } from "./stores/mapStore";
+import { useConnectionStore } from "./stores/connectionStore";
 
 function App() {
   const { attributeTableVisible, toggleAttributeTable, selectedFeatureIds } = useMapStore();
   const { loadFromPath } = useFileLoader();
   const [isDragging, setIsDragging] = useState(false);
   const [tableHeight, setTableHeight] = useState(280);
+
+  const { loadConnections } = useConnectionStore();
+
+  // Load connection profiles at application startup
+  useEffect(() => {
+    loadConnections();
+  }, [loadConnections]);
 
   // Native file drag-and-drop (Tauri webview). Reuses the same parsing path
   // as the file dialog. No-op outside Tauri (e.g. browser `npm run dev`).

@@ -34,6 +34,7 @@ export interface Layer {
   // Present for online layers: the connection they were loaded from, so the
   // layer can be re-fetched in place ("refresh").
   connection?: SavedConnection;
+  loading?: boolean;
 }
 
 export interface ViewState {

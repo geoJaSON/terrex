@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { appDataDir, join } from "@tauri-apps/api/path";
 
 export type ConnectionType = "arcgis_feature" | "wfs" | "geojson_url";
 export type AuthType = "none" | "basic" | "token";
@@ -11,8 +10,6 @@ export interface SavedConnection {
   type: ConnectionType;
   url: string;
   authType: AuthType;
-  // Note: Passwords are not persisted to disk for security reasons.
-  // They are only kept in memory during an active session if needed.
 }
 
 interface ConnectionState {
@@ -25,13 +22,6 @@ interface ConnectionState {
   setManagerOpen: (open: boolean) => void;
 }
 
-const CONFIG_FILE = "connections.json";
-
-async function getConfigFile(): Promise<string> {
-  const dir = await appDataDir();
-  return await join(dir, CONFIG_FILE);
-}
-
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connections: [],
   isManagerOpen: false,
@@ -39,13 +29,11 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   loadConnections: async () => {
     try {
-      const path = await getConfigFile();
-      const content = await invoke<string>("read_file", { path });
+      const content = await invoke<string>("load_connections");
       const connections: SavedConnection[] = JSON.parse(content);
       set({ connections });
     } catch (err) {
       console.log("No existing connections file found or failed to load.", err);
-      // It's normal if it doesn't exist yet
     }
   },
 
@@ -54,7 +42,6 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     const existing = connections.findIndex((c) => c.id === conn.id);
     let newConnections;
     
-    // Strip out any accidental credentials before saving
     const safeConn: SavedConnection = {
       id: conn.id,
       name: conn.name,
@@ -72,10 +59,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     
     set({ connections: newConnections });
 
-    // Persist to disk
     try {
-      const path = await getConfigFile();
-      await invoke("write_file", { path, content: JSON.stringify(newConnections, null, 2) });
+      await invoke("save_connections", { content: JSON.stringify(newConnections, null, 2) });
     } catch (err) {
       console.error("Failed to save connections to disk:", err);
     }
@@ -85,10 +70,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     const newConnections = get().connections.filter((c) => c.id !== id);
     set({ connections: newConnections });
 
-    // Persist to disk
     try {
-      const path = await getConfigFile();
-      await invoke("write_file", { path, content: JSON.stringify(newConnections, null, 2) });
+      await invoke("save_connections", { content: JSON.stringify(newConnections, null, 2) });
     } catch (err) {
       console.error("Failed to save connections to disk:", err);
     }

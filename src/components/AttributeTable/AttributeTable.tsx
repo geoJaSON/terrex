@@ -57,6 +57,11 @@ export function AttributeTable() {
     }));
   }, [sourceData]);
 
+  const selectedFeatures = useMemo(() => {
+    if (!activeLayer) return [];
+    return activeLayer.data.features.filter((f) => selectedFeatureIds.has(f.id as number));
+  }, [activeLayer, selectedFeatureIds]);
+
   const columns = useMemo<ColumnDef<RowData>[]>(() => {
     if (!activeLayer) return [];
     return activeLayer.attributes.map((attr) => ({
@@ -84,6 +89,12 @@ export function AttributeTable() {
   });
 
   const { rows } = table.getRowModel();
+
+  const handleSelectAll = useCallback(() => {
+    if (!activeLayer) return;
+    const allIds = rows.map((r) => r.original._featureIndex);
+    setSelectedFeatures(new Set(allIds));
+  }, [activeLayer, rows, setSelectedFeatures]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -192,16 +203,22 @@ export function AttributeTable() {
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
           />
+          <button className="btn btn--sm" onClick={handleSelectAll} title="Select all currently visible/filtered features">
+            ☑️ {filteredCount < totalCount ? "Select Filtered" : "Select All"}
+          </button>
+          {selectedFeatureIds.size > 0 && (
+            <button className="btn btn--sm btn--ghost" onClick={() => setSelectedFeatures(new Set())} title="Clear selection">
+              🧹 Clear
+            </button>
+          )}
           {selectedFeatureIds.size > 0 && (
             <button className="btn btn--sm" onClick={handleZoomToSelection} title="Zoom map to selected features">
               🎯 Zoom
             </button>
           )}
-          {selectedFeatureIds.size > 1 && (
-            <button className="btn btn--sm" onClick={() => setShowBatchEdit(true)} title="Batch edit selected features">
-              ✏️ Batch Edit
-            </button>
-          )}
+          <button className="btn btn--sm" onClick={() => setShowBatchEdit(true)} title="Batch edit or calculate attributes using expressions">
+            ✏️ Calculator
+          </button>
           <button
             className="btn btn--sm"
             onClick={handleExportCSV}
@@ -292,7 +309,13 @@ export function AttributeTable() {
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setStatsColumn(null)} />
           <div style={{ position: "fixed", left: statsPosition.x, top: statsPosition.y, zIndex: 100 }}>
-            <ColumnStats layer={activeLayer} attribute={statsColumn} onClose={() => setStatsColumn(null)} />
+            <ColumnStats
+              layer={activeLayer}
+              attribute={statsColumn}
+              filteredFeatures={sourceData?.features || []}
+              selectedFeatures={selectedFeatures}
+              onClose={() => setStatsColumn(null)}
+            />
           </div>
         </>
       )}
