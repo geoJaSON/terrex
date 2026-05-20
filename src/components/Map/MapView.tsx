@@ -17,11 +17,32 @@ import type { Layer } from "../../types/layer";
 import type { LngLatBoundsLike } from "maplibre-gl";
 import { FilterIcon, TableIcon } from "../StatusBar/icons";
 
-const BASEMAPS: Record<string, string> = {
-  osm: "https://tiles.stadiamaps.com/styles/osm_bright.json",
-  dark: "https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json",
-  light: "https://tiles.stadiamaps.com/styles/alidade_smooth.json",
-  satellite: "https://tiles.stadiamaps.com/styles/alidade_satellite.json",
+const BASEMAPS: Record<string, any> = {
+  osm: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+  dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+  light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+  satellite: {
+    version: 8,
+    sources: {
+      "satellite-tiles": {
+        type: "raster",
+        tiles: [
+          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        ],
+        tileSize: 256,
+        attribution: "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+      }
+    },
+    layers: [
+      {
+        id: "satellite-layer",
+        type: "raster",
+        source: "satellite-tiles",
+        minzoom: 0,
+        maxzoom: 20
+      }
+    ]
+  }
 };
 
 // Geodesic distance (Haversine formula) in meters

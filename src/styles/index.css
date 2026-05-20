@@ -423,9 +423,18 @@ html, body, #root {
 }
 .filter-bar__select {
   padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm); background: var(--bg-tertiary);
-  color: var(--text-primary); font-family: var(--font-family);
+  border-radius: var(--radius-sm); background: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important; font-family: var(--font-family);
   font-size: var(--font-size-xs); outline: none; cursor: pointer;
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%2333ff33' d='M0 0l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+.filter-bar__select option {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 .filter-bar__select:focus { border-color: var(--accent-primary); }
 .filter-bar__layer-select { min-width: 140px; }
@@ -733,23 +742,28 @@ html, body, #root {
   flex: 1;
 }
 .measure-hud__select {
-  background: var(--bg-tertiary);
+  background: var(--bg-tertiary) !important;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  color: var(--accent-primary);
+  color: var(--accent-primary) !important;
   font-family: var(--font-mono);
   font-size: 10px;
   padding: 2px 4px;
   cursor: pointer;
   outline: none;
   transition: border-color var(--transition-fast);
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'><path fill='%2333ff33' d='M0 0l4 4 4-4z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 18px;
 }
 .measure-hud__select:hover,
 .measure-hud__select:focus {
   border-color: var(--accent-primary);
 }
 .measure-hud__select option {
-  background: var(--surface-panel);
+  background: var(--bg-tertiary);
   color: var(--text-primary);
 }
 
