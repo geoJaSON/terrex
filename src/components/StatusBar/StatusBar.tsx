@@ -1,6 +1,5 @@
 import { useMapStore } from "../../stores/mapStore";
 import { GoToSearch } from "../Map/GoToSearch";
-import { FilterIcon, TableIcon } from "./icons";
 
 export function StatusBar() {
   const {
@@ -9,10 +8,6 @@ export function StatusBar() {
     layers,
     activeLayerId,
     selectedFeatureIds,
-    attributeTableVisible,
-    toggleAttributeTable,
-    filterBarVisible,
-    toggleFilterBar,
     filters,
     editHistoryIndex,
     editHistory,
@@ -104,21 +99,6 @@ export function StatusBar() {
         disabled={editHistoryIndex >= editHistory.length - 1}
         title="Redo (Ctrl+Y)"
       >↪</button>
-
-      <div className="status-bar__separator" />
-
-      <button
-        className={`icon-btn icon-btn--sm ${filterBarVisible ? "icon-btn--active" : ""}`}
-        onClick={toggleFilterBar}
-        title="Toggle Filter Bar"
-        aria-label="Toggle query filter bar"
-      ><FilterIcon /></button>
-      <button
-        className={`icon-btn icon-btn--sm ${attributeTableVisible ? "icon-btn--active" : ""}`}
-        onClick={toggleAttributeTable}
-        title="Toggle Attribute Table"
-        aria-label="Toggle attribute table"
-      ><TableIcon /></button>
     </div>
   );
 }

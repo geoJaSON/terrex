@@ -15,6 +15,7 @@ import { useMapStore } from "../../stores/mapStore";
 import { BasemapSwitcher } from "./BasemapSwitcher";
 import type { Layer } from "../../types/layer";
 import type { LngLatBoundsLike } from "maplibre-gl";
+import { FilterIcon, TableIcon } from "../StatusBar/icons";
 
 const BASEMAPS: Record<string, string> = {
   osm: "https://tiles.stadiamaps.com/styles/osm_bright.json",
@@ -56,14 +57,40 @@ function getSphericalArea(coords: [number, number][]): number {
   return totalArea; // area in square meters
 }
 
-function formatDistance(meters: number): string {
-  if (meters < 1000) return `${meters.toFixed(1)} m`;
-  return `${(meters / 1000).toFixed(3)} km`;
+type MeasureUnit = "metric" | "imperial" | "nautical";
+
+function formatDistance(meters: number, unit: MeasureUnit): string {
+  switch (unit) {
+    case "imperial": {
+      const feet = meters * 3.28084;
+      if (feet < 5280) return `${feet.toFixed(1)} ft`;
+      return `${(feet / 5280).toFixed(3)} mi`;
+    }
+    case "nautical": {
+      const nm = meters / 1852;
+      return `${nm.toFixed(3)} nmi`;
+    }
+    default:
+      if (meters < 1000) return `${meters.toFixed(1)} m`;
+      return `${(meters / 1000).toFixed(3)} km`;
+  }
 }
 
-function formatArea(sqMeters: number): string {
-  if (sqMeters < 1000000) return `${sqMeters.toFixed(1)} m²`;
-  return `${(sqMeters / 1000000).toFixed(3)} km²`;
+function formatArea(sqMeters: number, unit: MeasureUnit): string {
+  switch (unit) {
+    case "imperial": {
+      const sqFt = sqMeters * 10.7639;
+      if (sqFt < 43560) return `${sqFt.toFixed(1)} ft²`;
+      return `${(sqFt / 43560).toFixed(3)} ac`;
+    }
+    case "nautical": {
+      const sqNm = sqMeters / 3429904;
+      return `${sqNm.toFixed(4)} nmi²`;
+    }
+    default:
+      if (sqMeters < 1000000) return `${sqMeters.toFixed(1)} m²`;
+      return `${(sqMeters / 1000000).toFixed(3)} km²`;
+  }
 }
 
 function getLayerIds(layer: Layer): string[] {
@@ -158,6 +185,10 @@ export function MapView() {
     filters,
     getFilteredData,
     searchMarker,
+    filterBarVisible,
+    toggleFilterBar,
+    attributeTableVisible,
+    toggleAttributeTable,
   } = useMapStore();
   const [currentBasemap, setCurrentBasemap] = useState("dark");
 
@@ -171,6 +202,7 @@ export function MapView() {
 
   const [measureMode, setMeasureMode] = useState(false);
   const [measurePoints, setMeasurePoints] = useState<[number, number][]>([]);
+  const [measureUnit, setMeasureUnit] = useState<MeasureUnit>("metric");
   const [toast, setToast] = useState<string | null>(null);
 
   // Auto-clear toast
@@ -381,6 +413,7 @@ export function MapView() {
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
+        cursor={measureMode ? "crosshair" : undefined}
         mapStyle={BASEMAPS[currentBasemap]}
         style={{ width: "100%", height: "100%" }}
       >
@@ -541,13 +574,25 @@ export function MapView() {
           </div>
           <div className="measure-hud__body">
             <div className="measure-hud__stat">
+              <span className="measure-hud__label">Units:</span>
+              <select
+                className="measure-hud__select"
+                value={measureUnit}
+                onChange={(e) => setMeasureUnit(e.target.value as MeasureUnit)}
+              >
+                <option value="metric">Metric (m / km)</option>
+                <option value="imperial">Imperial (ft / mi)</option>
+                <option value="nautical">Nautical (nmi)</option>
+              </select>
+            </div>
+            <div className="measure-hud__stat">
               <span className="measure-hud__label">Total Distance:</span>
-              <span className="measure-hud__value">{formatDistance(totalDistance)}</span>
+              <span className="measure-hud__value">{formatDistance(totalDistance, measureUnit)}</span>
             </div>
             {measurePoints.length >= 3 && (
               <div className="measure-hud__stat">
                 <span className="measure-hud__label">Enclosed Area:</span>
-                <span className="measure-hud__value">{formatArea(totalArea)}</span>
+                <span className="measure-hud__value">{formatArea(totalArea, measureUnit)}</span>
               </div>
             )}
             <div className="measure-hud__help">
@@ -581,6 +626,26 @@ export function MapView() {
 
       {/* Floating HUD Copy/Status Toast */}
       {toast && <div className="map-toast">{toast}</div>}
+
+      {/* Floating map tools positioned adjacent to BasemapSwitcher */}
+      <div className="map-floating-tools">
+        <button
+          className={`icon-btn ${filterBarVisible ? "icon-btn--active" : ""}`}
+          onClick={toggleFilterBar}
+          title="Toggle Filter Bar"
+          aria-label="Toggle query filter bar"
+        >
+          <FilterIcon />
+        </button>
+        <button
+          className={`icon-btn ${attributeTableVisible ? "icon-btn--active" : ""}`}
+          onClick={toggleAttributeTable}
+          title="Toggle Attribute Table"
+          aria-label="Toggle attribute table"
+        >
+          <TableIcon />
+        </button>
+      </div>
 
       <BasemapSwitcher
         current={currentBasemap}
