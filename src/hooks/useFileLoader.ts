@@ -16,6 +16,8 @@ import shp from "shpjs";
 import { kml as kmlToGeoJSON } from "@tmcw/togeojson";
 import { DOMParser } from "@xmldom/xmldom";
 import Papa from "papaparse";
+import * as GeoTIFF from "geotiff";
+import fgdb from "fgdb";
 
 function generateId(): string {
   return `layer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -35,6 +37,7 @@ function detectGeometryType(
 function computeExtent(
   fc: FeatureCollection<Geometry, GeoJsonProperties>
 ): [number, number, number, number] | null {
+  if (!fc.features || fc.features.length === 0) return null;
   let minLng = Infinity;
   let minLat = Infinity;
   let maxLng = -Infinity;
@@ -87,6 +90,7 @@ function extractAttributes(
   fc: FeatureCollection<Geometry, GeoJsonProperties>
 ): string[] {
   const attrs = new Set<string>();
+  if (!fc.features) return [];
   for (const feature of fc.features) {
     if (feature.properties) {
       for (const key of Object.keys(feature.properties)) {
@@ -134,12 +138,10 @@ async function parseGeoJSON(path: string): Promise<FeatureCollection> {
   const content: string = await invoke("read_file", { path });
   const parsed = JSON.parse(content);
 
-  // Handle bare geometry or single feature
   if (parsed.type === "Feature") {
     return { type: "FeatureCollection", features: [parsed] };
   }
   if (parsed.type !== "FeatureCollection") {
-    // Might be bare geometry
     return {
       type: "FeatureCollection",
       features: [{ type: "Feature", geometry: parsed, properties: {} }],
@@ -149,16 +151,10 @@ async function parseGeoJSON(path: string): Promise<FeatureCollection> {
 }
 
 // ── Parse Shapefile (zip) ──
-async function parseShapefile(path: string): Promise<FeatureCollection> {
+async function parseShapefile(path: string): Promise<FeatureCollection | FeatureCollection[]> {
   const bytes: number[] = await invoke("read_file_binary", { path });
   const buffer = new Uint8Array(bytes).buffer;
-  const result = await shp(buffer);
-
-  // shpjs can return an array if the zip has multiple shapefiles
-  if (Array.isArray(result)) {
-    return result[0] as FeatureCollection;
-  }
-  return result as FeatureCollection;
+  return await shp(buffer);
 }
 
 // ── Parse KML ──
@@ -171,36 +167,26 @@ async function parseKML(path: string): Promise<FeatureCollection> {
 // ── Parse CSV ──
 async function parseCSV(path: string): Promise<FeatureCollection> {
   const content: string = await invoke("read_file", { path });
-
   const parsed = Papa.parse<Record<string, string>>(content, {
     header: true,
     skipEmptyLines: true,
     dynamicTyping: true,
   });
 
-  if (parsed.errors.length > 0) {
-    console.warn("CSV parse warnings:", parsed.errors);
-  }
-
   const headers = parsed.meta.fields || [];
   const latCol = findColumnMatch(headers, LAT_PATTERNS);
   const lngCol = findColumnMatch(headers, LNG_PATTERNS);
 
   if (!latCol || !lngCol) {
-    throw new Error(
-      `Could not detect latitude/longitude columns. Found headers: ${headers.join(", ")}. ` +
-      `Expected columns matching lat/latitude/y and lon/lng/longitude/x.`
-    );
+    throw new Error(`Could not detect latitude/longitude columns.`);
   }
 
   const features: Feature[] = [];
   for (const row of parsed.data) {
     const lat = parseFloat(String(row[latCol]));
     const lng = parseFloat(String(row[lngCol]));
-
     if (isNaN(lat) || isNaN(lng)) continue;
 
-    // Build properties excluding the coordinate columns
     const properties: GeoJsonProperties = {};
     for (const [key, value] of Object.entries(row)) {
       if (key !== latCol && key !== lngCol) {
@@ -210,10 +196,7 @@ async function parseCSV(path: string): Promise<FeatureCollection> {
 
     features.push({
       type: "Feature",
-      geometry: {
-        type: "Point",
-        coordinates: [lng, lat],
-      },
+      geometry: { type: "Point", coordinates: [lng, lat] },
       properties,
     });
   }
@@ -221,44 +204,159 @@ async function parseCSV(path: string): Promise<FeatureCollection> {
   return { type: "FeatureCollection", features };
 }
 
+// ── Parse FGDB ──
+async function parseFGDB(path: string): Promise<Record<string, FeatureCollection>> {
+  const bytes: number[] = await invoke("read_file_binary", { path });
+  const buffer = new Uint8Array(bytes).buffer;
+  const result = await fgdb(buffer);
+  return result;
+}
+
+async function parseFGDBBuffer(buffer: ArrayBuffer): Promise<Record<string, FeatureCollection>> {
+  const result = await fgdb(buffer);
+  return result;
+}
+
+// ── Parse GeoTIFF ──
+async function parseGeoTIFF(path: string): Promise<{ dataUrl: string; coordinates: [[number, number], [number, number], [number, number], [number, number]]; extent: [number, number, number, number] }> {
+  const bytes: number[] = await invoke("read_file_binary", { path });
+  const buffer = new Uint8Array(bytes).buffer;
+  return await processGeoTIFFBuffer(buffer);
+}
+
+async function processGeoTIFFBuffer(buffer: ArrayBuffer) {
+  const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+  const image = await tiff.getImage();
+  const bbox = image.getBoundingBox();
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
+    [minLng, maxLat], // NW
+    [maxLng, maxLat], // NE
+    [maxLng, minLat], // SE
+    [minLng, minLat]  // SW
+  ];
+  
+  const rgb = await image.readRGB(); 
+  const width = image.getWidth();
+  const height = image.getHeight();
+  
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not create canvas context");
+  
+  const imageData = ctx.createImageData(width, height);
+  let j = 0;
+  for (let i = 0; i < rgb.length; i += 3) {
+    imageData.data[j++] = (rgb as any)[i];
+    imageData.data[j++] = (rgb as any)[i + 1];
+    imageData.data[j++] = (rgb as any)[i + 2];
+    imageData.data[j++] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  const dataUrl = canvas.toDataURL("image/png");
+  
+  return {
+    dataUrl,
+    coordinates,
+    extent: [minLng, minLat, maxLng, maxLat] as [number, number, number, number]
+  };
+}
+
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-// ── Main file loader hook ──
 export function useFileLoader() {
   const { addLayer, getNextColor } = useMapStore();
 
-  const loadBrowserFile = useCallback(async (file: File): Promise<Layer> => {
+  const processVectorLayer = useCallback((geojson: FeatureCollection, name: string, fileName?: string): Layer => {
+    geojson.features = geojson.features.map((f, i) => ({ ...f, id: i }));
+    const color = getNextColor();
+    return {
+      id: generateId(),
+      name,
+      fileName,
+      geometryType: detectGeometryType(geojson),
+      source: "local",
+      visible: true,
+      style: { color, opacity: 0.7, strokeColor: color, strokeWidth: 2, pointRadius: 6 },
+      data: geojson,
+      featureCount: geojson.features.length,
+      extent: computeExtent(geojson),
+      attributes: extractAttributes(geojson),
+    };
+  }, [getNextColor]);
+
+  const loadBrowserFile = useCallback(async (file: File): Promise<Layer | Layer[]> => {
     try {
       const ext = file.name.split(".").pop()?.toLowerCase();
-      let geojson: FeatureCollection<Geometry, GeoJsonProperties>;
-
+      
       if (ext === "zip") {
         const buffer = await file.arrayBuffer();
-        const result = await shp(buffer);
-        geojson = Array.isArray(result) ? (result[0] as FeatureCollection) : (result as FeatureCollection);
-      } else if (ext === "kml") {
+        try {
+          // Try FGDB first
+          const fgdbResult = await parseFGDBBuffer(buffer);
+          if (fgdbResult && Object.keys(fgdbResult).length > 0) {
+            const layers = Object.entries(fgdbResult).map(([name, fc]) => {
+              const layer = processVectorLayer(fc, name, file.name);
+              addLayer(layer);
+              return layer;
+            });
+            return layers;
+          }
+        } catch (e) {
+          // Fallback to SHP
+          const result = await shp(buffer);
+          if (Array.isArray(result)) {
+            const layers = result.map((fc: FeatureCollection) => {
+              const layer = processVectorLayer(fc, file.name.replace(/\.[^.]+$/, ""), file.name);
+              addLayer(layer);
+              return layer;
+            });
+            return layers;
+          } else {
+            const layer = processVectorLayer(result as FeatureCollection, file.name.replace(/\.[^.]+$/, ""), file.name);
+            addLayer(layer);
+            return layer;
+          }
+        }
+      } else if (ext === "tif" || ext === "tiff") {
+        const buffer = await file.arrayBuffer();
+        const rasterData = await processGeoTIFFBuffer(buffer);
+        const layer: Layer = {
+          id: generateId(),
+          name: file.name.replace(/\.[^.]+$/, ""),
+          fileName: file.name,
+          geometryType: "Raster",
+          source: "local",
+          visible: true,
+          style: { color: "#fff", opacity: 1, strokeColor: "#fff", strokeWidth: 0, pointRadius: 0 },
+          data: { type: "FeatureCollection", features: [] },
+          featureCount: 0,
+          extent: rasterData.extent,
+          attributes: [],
+          rasterUrl: rasterData.dataUrl,
+          rasterCoordinates: rasterData.coordinates,
+        };
+        addLayer(layer);
+        return layer;
+      }
+      
+      let geojson: FeatureCollection;
+      
+      if (ext === "kml") {
         const content = await file.text();
         const dom = new DOMParser().parseFromString(content, "text/xml");
         geojson = kmlToGeoJSON(dom) as FeatureCollection;
       } else if (ext === "csv") {
         const content = await file.text();
-        const parsed = Papa.parse<Record<string, string>>(content, {
-          header: true,
-          skipEmptyLines: true,
-          dynamicTyping: true,
-        });
-        
+        const parsed = Papa.parse<Record<string, string>>(content, { header: true, skipEmptyLines: true, dynamicTyping: true });
         const headers = parsed.meta.fields || [];
         const latCol = findColumnMatch(headers, LAT_PATTERNS);
         const lngCol = findColumnMatch(headers, LNG_PATTERNS);
-        
-        if (!latCol || !lngCol) {
-          throw new Error(
-            `Could not detect latitude/longitude columns. Found headers: ${headers.join(", ")}.`
-          );
-        }
+        if (!latCol || !lngCol) throw new Error(`Could not detect latitude/longitude columns.`);
         
         const features: Feature[] = [];
         for (const row of parsed.data) {
@@ -270,124 +368,101 @@ export function useFileLoader() {
           for (const [key, value] of Object.entries(row)) {
             if (key !== latCol && key !== lngCol) properties[key] = value;
           }
-          
-          features.push({
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [lng, lat] },
-            properties,
-          });
+          features.push({ type: "Feature", geometry: { type: "Point", coordinates: [lng, lat] }, properties });
         }
         geojson = { type: "FeatureCollection", features };
       } else {
-        // geojson / json
         const content = await file.text();
         const parsed = JSON.parse(content);
         if (parsed.type === "Feature") {
           geojson = { type: "FeatureCollection", features: [parsed] };
         } else if (parsed.type !== "FeatureCollection") {
-          geojson = {
-            type: "FeatureCollection",
-            features: [{ type: "Feature", geometry: parsed, properties: {} }],
-          };
+          geojson = { type: "FeatureCollection", features: [{ type: "Feature", geometry: parsed, properties: {} }] };
         } else {
           geojson = parsed;
         }
       }
 
-      if (!geojson.features || !Array.isArray(geojson.features)) {
-        throw new Error("Invalid data: no features found after parsing");
-      }
-
-      geojson.features = geojson.features.map((f, i) => ({ ...f, id: i }));
-
-      const color = getNextColor();
-      const layer: Layer = {
-        id: generateId(),
-        name: file.name.replace(/\.[^.]+$/, ""),
-        fileName: file.name,
-        geometryType: detectGeometryType(geojson),
-        source: "local",
-        visible: true,
-        style: {
-          color,
-          opacity: 0.7,
-          strokeColor: color,
-          strokeWidth: 2,
-          pointRadius: 6,
-        },
-        data: geojson,
-        featureCount: geojson.features.length,
-        extent: computeExtent(geojson),
-        attributes: extractAttributes(geojson),
-      };
-
+      if (!geojson.features || !Array.isArray(geojson.features)) throw new Error("Invalid data: no features found");
+      
+      const layer = processVectorLayer(geojson, file.name.replace(/\.[^.]+$/, ""), file.name);
       addLayer(layer);
       return layer;
     } catch (error) {
       console.error("Failed to parse browser file:", error);
       throw error;
     }
-  }, [addLayer, getNextColor]);
+  }, [addLayer, processVectorLayer]);
 
-  const loadFromPath = useCallback(async (filePath: string) => {
+  const loadFromPath = useCallback(async (filePath: string): Promise<Layer | Layer[]> => {
     try {
       const ext = getFileExtension(filePath);
-
-      let geojson: FeatureCollection<Geometry, GeoJsonProperties>;
-
+      
+      if (ext === "zip") {
+        try {
+          const fgdbResult = await parseFGDB(filePath);
+          if (fgdbResult && Object.keys(fgdbResult).length > 0) {
+             const layers = Object.entries(fgdbResult).map(([name, fc]) => {
+              const layer = processVectorLayer(fc, name, filePath);
+              addLayer(layer);
+              return layer;
+            });
+            return layers;
+          }
+        } catch(e) {
+          // Fallback to SHP
+          const result = await parseShapefile(filePath);
+          if (Array.isArray(result)) {
+            const layers = result.map((fc: FeatureCollection) => {
+              const layer = processVectorLayer(fc, getFileBasename(filePath), filePath);
+              addLayer(layer);
+              return layer;
+            });
+            return layers;
+          } else {
+             const layer = processVectorLayer(result as FeatureCollection, getFileBasename(filePath), filePath);
+             addLayer(layer);
+             return layer;
+          }
+        }
+      } else if (ext === "tif" || ext === "tiff") {
+        const rasterData = await parseGeoTIFF(filePath);
+        const layer: Layer = {
+          id: generateId(),
+          name: getFileBasename(filePath),
+          fileName: filePath,
+          geometryType: "Raster",
+          source: "local",
+          visible: true,
+          style: { color: "#fff", opacity: 1, strokeColor: "#fff", strokeWidth: 0, pointRadius: 0 },
+          data: { type: "FeatureCollection", features: [] },
+          featureCount: 0,
+          extent: rasterData.extent,
+          attributes: [],
+          rasterUrl: rasterData.dataUrl,
+          rasterCoordinates: rasterData.coordinates,
+        };
+        addLayer(layer);
+        return layer;
+      }
+      
+      let geojson: FeatureCollection;
       switch (ext) {
-        case "zip":
-          geojson = await parseShapefile(filePath);
-          break;
-        case "kml":
-          geojson = await parseKML(filePath);
-          break;
-        case "csv":
-          geojson = await parseCSV(filePath);
-          break;
-        default:
-          geojson = await parseGeoJSON(filePath);
-          break;
+        case "kml": geojson = await parseKML(filePath); break;
+        case "csv": geojson = await parseCSV(filePath); break;
+        default: geojson = await parseGeoJSON(filePath); break;
       }
 
-      if (!geojson.features || !Array.isArray(geojson.features)) {
-        throw new Error("Invalid data: no features found after parsing");
-      }
+      if (!geojson.features || !Array.isArray(geojson.features)) throw new Error("Invalid data: no features found");
 
-      // Assign stable IDs for selection tracking
-      geojson.features = geojson.features.map((f, i) => ({
-        ...f,
-        id: i,
-      }));
-
-      const color = getNextColor();
-      const layer: Layer = {
-        id: generateId(),
-        name: getFileBasename(filePath),
-        fileName: filePath,
-        geometryType: detectGeometryType(geojson),
-        source: "local",
-        visible: true,
-        style: {
-          color,
-          opacity: 0.7,
-          strokeColor: color,
-          strokeWidth: 2,
-          pointRadius: 6,
-        },
-        data: geojson,
-        featureCount: geojson.features.length,
-        extent: computeExtent(geojson),
-        attributes: extractAttributes(geojson),
-      };
-
+      const layer = processVectorLayer(geojson, getFileBasename(filePath), filePath);
       addLayer(layer);
       return layer;
     } catch (error) {
       console.error("Failed to load file:", error);
       throw error;
     }
-  }, [addLayer, getNextColor]);
+  }, [addLayer, processVectorLayer]);
 
   const loadFile = useCallback(async () => {
     if (isTauri()) {
@@ -395,9 +470,10 @@ export function useFileLoader() {
         const selected = await open({
           multiple: false,
           filters: [
-            { name: "Geospatial Files", extensions: ["geojson", "json", "zip", "kml", "csv"] },
+            { name: "Geospatial Files", extensions: ["geojson", "json", "zip", "kml", "csv", "tif", "tiff"] },
             { name: "GeoJSON", extensions: ["geojson", "json"] },
-            { name: "Shapefile (ZIP)", extensions: ["zip"] },
+            { name: "Shapefile/FGDB (ZIP)", extensions: ["zip"] },
+            { name: "GeoTIFF", extensions: ["tif", "tiff"] },
             { name: "KML", extensions: ["kml"] },
             { name: "CSV", extensions: ["csv"] },
             { name: "All Files", extensions: ["*"] },
@@ -410,10 +486,10 @@ export function useFileLoader() {
       }
     }
 
-    return new Promise<Layer | undefined>((resolve, reject) => {
+    return new Promise<Layer | Layer[] | undefined>((resolve, reject) => {
       const input = document.createElement("input");
       input.type = "file";
-      input.accept = ".geojson,.json,.zip,.kml,.csv";
+      input.accept = ".geojson,.json,.zip,.kml,.csv,.tif,.tiff";
       
       input.onchange = async () => {
         const file = input.files?.[0];

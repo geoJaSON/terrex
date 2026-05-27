@@ -7,7 +7,8 @@ export type GeometryType =
   | "LineString"
   | "MultiLineString"
   | "Polygon"
-  | "MultiPolygon";
+  | "MultiPolygon"
+  | "Raster";
 
 export type LayerSource = "local" | "online";
 
@@ -35,6 +36,10 @@ export interface Layer {
   // layer can be re-fetched in place ("refresh").
   connection?: SavedConnection;
   loading?: boolean;
+  
+  // Raster properties
+  rasterUrl?: string; // Data URL or object URL for the image
+  rasterCoordinates?: [[number, number], [number, number], [number, number], [number, number]]; // [NW, NE, SE, SW]
 }
 
 export interface ViewState {

@@ -443,6 +443,25 @@ export function MapView() {
         {visibleLayers.map((layer) => {
           const isActive = layer.id === activeLayerId;
           const selIds = isActive ? selectedFeatureIds : new Set<number>();
+          
+          if (layer.geometryType === "Raster" && layer.rasterUrl && layer.rasterCoordinates) {
+            return (
+              <Source
+                key={layer.id}
+                id={`source-${layer.id}`}
+                type="image"
+                url={layer.rasterUrl}
+                coordinates={layer.rasterCoordinates}
+              >
+                <MapLayer
+                  id={`layer-${layer.id}-raster`}
+                  type="raster"
+                  paint={{ "raster-opacity": layer.style.opacity }}
+                />
+              </Source>
+            );
+          }
+
           const displayData = filters[layer.id]?.active ? getFilteredData(layer.id) : layer.data;
 
           return (
