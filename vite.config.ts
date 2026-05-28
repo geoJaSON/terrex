@@ -9,6 +9,16 @@ export default defineConfig(async () => ({
   plugins: [react()],
   base: "./",
 
+  // Some dependencies (e.g. fgdb -> immediate) assume Node's `global`.
+  // In browsers / Tauri webviews, the equivalent is `globalThis`.
+  define: {
+    global: "globalThis",
+  },
+
+  optimizeDeps: {
+    include: ["fgdb"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
