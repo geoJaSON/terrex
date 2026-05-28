@@ -1,18 +1,26 @@
 # Terrex
 
-Terrex is a lightweight, cross-platform desktop GIS data management application
+Terrex is an experimental lightweight, cross-platform desktop GIS data management application
 for quickly inspecting, querying, editing, and converting geospatial data —
 without the weight of a full desktop GIS suite. It's built with
 [Tauri](https://tauri.app/) (Rust) + React, so it ships as a small native
 binary with a fast web-based UI.
 
+## NOTE:
+Geoprocessing and attribute editing tools are still a work-in-progress and may not function correctly for all datasets.
+Geometry editing is still on the todo list.
+
 ## Features
 
 ### Data sources
 
-- **Local files** — load GeoJSON/JSON, Shapefile (`.zip`), KML, and CSV.
+- **Local files** — load GeoJSON/JSON, Shapefile (`.zip`), KML, CSV, GeoTIFF,
+  and File Geodatabases (FGDB, `.zip`).
   - CSV files auto-detect latitude/longitude columns (`lat`/`latitude`/`y`,
     `lon`/`lng`/`longitude`/`x`, and common variants) and become point layers.
+  - Shapefiles and FGDBs are detected automatically from `.zip` — FGDB is tried
+    first and each layer in the geodatabase loads as a separate map layer.
+  - GeoTIFF files are rendered as georeferenced image overlays on the map.
   - Native drag-and-drop: drop supported files anywhere on the window.
 - **Online services** via the Connection Manager:
   - **ArcGIS Feature Layers** — ArcGIS Online and Enterprise/Server, with
@@ -25,30 +33,88 @@ binary with a fast web-based UI.
     through the Rust backend, so there are no CORS limitations and the
     `Referer` header can be set correctly for ArcGIS.
 
-### Working with data
+### Layer management
 
-- **Layer panel** — toggle visibility, reorder, and remove layers.
-- **Symbology editor** — fill color, opacity, stroke color/width, and point
-  radius per layer.
-- **Attribute table** — virtualized table (handles large datasets), with
-  per-column statistics.
-- **Query / filter bar** — build multi-condition attribute filters; the map
-  and table update to the filtered result.
-- **Editing** — edit feature attributes, batch-edit across multiple features,
-  with full undo/redo history.
-- **Map** — MapLibre GL rendering, switchable basemaps, and a "go to"
-  coordinate search. Working CRS is EPSG:4326.
-- **Export** — write a layer (or just the filtered/selected subset) to
-  GeoJSON or CSV.
+- **Layer panel** (left sidebar) — toggle visibility, reorder by dragging,
+  right-click context menu: zoom to extent, open attribute table, zoom to
+  selection, refresh (online layers), hide/show, export, and remove.
+- **Symbology editor** — click the color swatch on any layer to edit fill
+  color, opacity, stroke color/width, and point radius.
+- **Active layer** — click a layer to make it active; the attribute table,
+  filter bar, and geoprocessing tools all operate on the active layer.
+
+### Map
+
+- **MapLibre GL** rendering with hardware-accelerated vector and raster display.
+- **Basemaps** — switch between Voyager (OSM), Dark, Light, and Satellite
+  (Esri World Imagery) with the basemap switcher in the bottom-right corner.
+- **Go-to search** — geocode an address or enter coordinates to fly the view.
+- **Right-click context menu** — copy coordinates, drop a labeled pin, or start
+  a measurement.
+- **Measurement tool** — click points on the map to measure distance and area;
+  toggle between metric, imperial, and nautical units in the HUD.
+- **Floating toolbar** (bottom-right) — one-click toggles for the filter bar,
+  attribute table, and geoprocessing drawer.
+
+### Attribute table & querying
+
+- **Attribute table** — virtualized table that handles large datasets without
+  performance loss. Resize it by dragging the divider, double-click the divider
+  to close.
+- **Per-column statistics** — click any column header to see min, max, mean,
+  and unique values.
+- **Selection** — click rows or use Select All / Select Filtered; zoom to
+  selected features; selections carry through to export and batch edit.
+- **Query / filter bar** — build multi-condition attribute filters (=, !=, >,
+  LIKE, IN, IS NULL, …) with AND/OR matching; the map and table update to the
+  filtered result in real time.
+
+### Editing
+
+- **Attribute editing** — click any row in the attribute table to edit field
+  values directly.
+- **Batch edit** — assign a constant value to a field across all selected or
+  filtered features.
+- **Field calculator** — write JavaScript expressions referencing field names
+  (e.g. `{POPULATION} / {AREA}`) with a live preview; applies to selected or
+  filtered features.
+- **Undo / redo** — full edit history for attribute changes.
+
+### Geoprocessing
+
+Select a layer in the layer panel, then click the wrench button in the floating
+toolbar to open the Geoprocessing drawer. Click any tool to configure its
+parameters and run it — the result is added as a new layer.
+
+Available tools:
+
+| Tool | Description |
+|---|---|
+| Buffer | Expand features outward by a distance (meters, km, feet, miles) |
+| Dissolve | Merge features sharing a common field value |
+| Envelope | Bounding box of all features |
+| Convex Hull | Minimum convex polygon around all features |
+| Center Points | Centroid of each feature |
+| Simplify | Reduce vertex count with a configurable tolerance |
+| Voronoi Polygons | Voronoi diagram generated from point features |
+| Points Within Polygon | Filter point features that fall inside a polygon layer |
+
+### Export
+
+Write any layer — or just the filtered or selected subset — to GeoJSON or CSV
+via the layer context menu or the attribute table toolbar.
 
 ## Tech stack
 
-- **Shell:** Tauri 2 (Rust) — file I/O and a backend HTTP proxy command.
+- **Shell:** Tauri 2 (Rust) — file I/O, binary reads, and a backend HTTP proxy
+  command.
 - **UI:** React 19 + TypeScript, bundled with Vite 7.
 - **Map:** MapLibre GL via react-map-gl.
 - **State:** Zustand.
 - **Table:** TanStack Table + TanStack Virtual.
-- **Parsers:** shpjs (Shapefile), @tmcw/togeojson (KML), PapaParse (CSV).
+- **Geoprocessing:** Turf.js (`@turf/turf`).
+- **Parsers:** shpjs (Shapefile), fgdb (File Geodatabase), geotiff (GeoTIFF),
+  @tmcw/togeojson (KML), PapaParse (CSV).
 
 ## Prerequisites
 
@@ -100,14 +166,18 @@ npm run build
 ```
 src/                      React + TypeScript frontend
   components/
-    LayerPanel/           Layer list, symbology editor
-    Map/                  MapLibre view, basemap switcher, go-to search
-    AttributeTable/       Virtualized attribute table + column stats
-    FilterBar/            Query / filter builder
-    EditPanel/            Attribute editing + batch edit
+    LayerPanel/           Layer list, drag-and-drop reorder, symbology editor
+    Map/                  MapLibre view, basemap switcher, go-to search,
+                          measurement tool, context menu
+    AttributeTable/       Virtualized attribute table, column stats
+    FilterBar/            Multi-condition query / filter builder
+    EditPanel/            Single-feature attribute editor, batch edit,
+                          field calculator
     ConnectionManager/    Online data source connections
-    StatusBar/            Status bar + toolbar icons
-  hooks/useFileLoader.ts  Local file parsing (GeoJSON/SHP/KML/CSV)
+    Tools/                Geoprocessing drawer and tool parameter dialogs
+    StatusBar/            Status bar (cursor coords, zoom, CRS, filter
+                          status, layer count) + toolbar icons
+  hooks/useFileLoader.ts  Local file parsing (GeoJSON/SHP/FGDB/KML/CSV/GeoTIFF)
   services/               Online sources, credential cache
   stores/                 Zustand state (map, connections)
   utils/exporters.ts      GeoJSON / CSV export

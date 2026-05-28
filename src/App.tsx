@@ -9,6 +9,7 @@ import { AttributeTable } from "./components/AttributeTable/AttributeTable";
 import { FilterBar } from "./components/FilterBar/FilterBar";
 import { EditPanel } from "./components/EditPanel/EditPanel";
 import { ConnectionManager } from "./components/ConnectionManager/ConnectionManager";
+import { GeoprocessingDrawer } from "./components/Tools/GeoprocessingDrawer";
 import { useMapStore } from "./stores/mapStore";
 import { useConnectionStore } from "./stores/connectionStore";
 
@@ -126,6 +127,7 @@ function App() {
             )}
           </div>
           {showEditPanel && <EditPanel />}
+          <GeoprocessingDrawer />
         </div>
       </div>
       <StatusBar />

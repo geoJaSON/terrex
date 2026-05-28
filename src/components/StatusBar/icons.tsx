@@ -36,3 +36,12 @@ export function TableIcon() {
     </svg>
   );
 }
+
+/** Wrench: open-end wrench for geoprocessing tools. */
+export function WrenchIcon() {
+  return (
+    <svg {...base}>
+      <path d="M2 14 L7 9 M7 9 L6 7 L8 5 L11 5 L13 7 L11 9 L8 9 L7 9" />
+    </svg>
+  );
+}

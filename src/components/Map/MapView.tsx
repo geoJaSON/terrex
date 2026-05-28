@@ -15,7 +15,7 @@ import { useMapStore } from "../../stores/mapStore";
 import { BasemapSwitcher } from "./BasemapSwitcher";
 import type { Layer } from "../../types/layer";
 import type { LngLatBoundsLike } from "maplibre-gl";
-import { FilterIcon, TableIcon } from "../StatusBar/icons";
+import { FilterIcon, TableIcon, WrenchIcon } from "../StatusBar/icons";
 
 const BASEMAPS: Record<string, any> = {
   osm: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
@@ -210,6 +210,8 @@ export function MapView() {
     toggleFilterBar,
     attributeTableVisible,
     toggleAttributeTable,
+    geoprocessingDrawerOpen,
+    toggleGeoprocessingDrawer,
   } = useMapStore();
   const [currentBasemap, setCurrentBasemap] = useState("dark");
 
@@ -684,6 +686,14 @@ export function MapView() {
           aria-label="Toggle attribute table"
         >
           <TableIcon />
+        </button>
+        <button
+          className={`icon-btn ${geoprocessingDrawerOpen ? "icon-btn--active" : ""}`}
+          onClick={toggleGeoprocessingDrawer}
+          title="Geoprocessing Tools"
+          aria-label="Toggle geoprocessing tools"
+        >
+          <WrenchIcon />
         </button>
       </div>
 

@@ -3,7 +3,6 @@ import { useMapStore } from "../../stores/mapStore";
 import { useFileLoader } from "../../hooks/useFileLoader";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { LayerItem } from "./LayerItem";
-import { GeoprocessingDialog } from "../Tools/GeoprocessingDialog";
 
 export function LayerPanel() {
   const { layers, reorderLayers } = useMapStore();
@@ -11,7 +10,6 @@ export function LayerPanel() {
   const { loadFile } = useFileLoader();
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
-  const [geoprocessingOpen, setGeoprocessingOpen] = useState(false);
 
   const handleAddLayer = async () => {
     try {
@@ -38,18 +36,10 @@ export function LayerPanel() {
   }, [dragIndex, overIndex, reorderLayers]);
 
   return (
-    <>
-      <div className="sidebar">
+    <div className="sidebar">
         <div className="sidebar__header">
           <span className="sidebar__title">Layers</span>
           <div style={{ display: "flex", gap: "4px" }}>
-            <button
-              className="icon-btn"
-              onClick={() => setGeoprocessingOpen(true)}
-              title="Geoprocessing Tools"
-            >
-              🛠️
-            </button>
             <button
               className="icon-btn"
               onClick={() => setManagerOpen(true)}
@@ -106,11 +96,5 @@ export function LayerPanel() {
           )}
         </div>
       </div>
-      
-      <GeoprocessingDialog 
-        isOpen={geoprocessingOpen} 
-        onClose={() => setGeoprocessingOpen(false)} 
-      />
-    </>
   );
 }

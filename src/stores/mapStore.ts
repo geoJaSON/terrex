@@ -73,6 +73,10 @@ interface MapState {
   toggleAttributeTable: () => void;
   setAttributeTableVisible: (v: boolean) => void;
 
+  // Geoprocessing drawer
+  geoprocessingDrawerOpen: boolean;
+  toggleGeoprocessingDrawer: () => void;
+
   // Filter
   filters: Record<string, LayerFilter>;
   filterBarVisible: boolean;
@@ -251,6 +255,10 @@ export const useMapStore = create<MapState>((set, get) => ({
   attributeTableVisible: false,
   toggleAttributeTable: () => set((s) => ({ attributeTableVisible: !s.attributeTableVisible })),
   setAttributeTableVisible: (v) => set({ attributeTableVisible: v }),
+
+  // Geoprocessing drawer
+  geoprocessingDrawerOpen: false,
+  toggleGeoprocessingDrawer: () => set((s) => ({ geoprocessingDrawerOpen: !s.geoprocessingDrawerOpen })),
 
   // Filters
   filters: {},
