@@ -31,7 +31,7 @@ function parseCoordinates(input: string): { lat: number; lng: number } | null {
 
   // 2. Try DMS / DDM with NSEW direction indicators
   //    Matches patterns like: 41°52'41.1"N  or  41 52 41.1 N  or  41°52.686'N
-  const dmsRegex = /(\d+)[°\s]+(\d+(?:\.\d+)?)['\s]*(\d+(?:\.\d+))?["\s]*([NSEW])/gi;
+  const dmsRegex = /(\d+)[°\s]+(\d+(?:\.\d+)?)['\s]*(\d+(?:\.\d+)?)?["\s]*([NSEW])/gi;
   const parts = [...s.matchAll(dmsRegex)];
 
   if (parts.length === 2) {

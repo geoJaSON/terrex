@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useMapStore, type FilterCondition } from "../../stores/mapStore";
 import { FilterRow } from "./FilterRow";
 
@@ -26,23 +26,25 @@ export function FilterBar() {
   const attributes = selectedLayer?.attributes || [];
 
   // Sync selectedLayerId when activeLayerId changes
-  useMemo(() => {
+  useEffect(() => {
     if (activeLayerId && !selectedLayerId) {
       setSelectedLayerId(activeLayerId);
     }
   }, [activeLayerId, selectedLayerId]);
 
-  // Load existing filter when switching layers
-  useMemo(() => {
-    if (selectedLayerId && filters[selectedLayerId]) {
-      const f = filters[selectedLayerId];
+  // Load the stored filter only when switching layers. Reading the store
+  // imperatively (instead of depending on `filters`) keeps unrelated store
+  // updates from wiping in-progress condition edits.
+  useEffect(() => {
+    const f = selectedLayerId ? useMapStore.getState().filters[selectedLayerId] : undefined;
+    if (f) {
       setConditions(f.conditions.length > 0 ? f.conditions : [newCondition()]);
       setMatchMode(f.matchMode);
     } else {
       setConditions([newCondition()]);
       setMatchMode("all");
     }
-  }, [selectedLayerId, filters]);
+  }, [selectedLayerId]);
 
   const handleLayerChange = useCallback((id: string) => {
     setSelectedLayerId(id);

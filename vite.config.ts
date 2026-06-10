@@ -11,12 +11,23 @@ export default defineConfig(async () => ({
 
   // Some dependencies (e.g. fgdb -> immediate) assume Node's `global`.
   // In browsers / Tauri webviews, the equivalent is `globalThis`.
+  // fgdb also branches on `process.browser` at runtime; without this define
+  // it throws ReferenceError in the webview and FGDB loading silently fails.
   define: {
     global: "globalThis",
+    "process.browser": "true",
   },
 
   optimizeDeps: {
     include: ["fgdb"],
+    // `define` above is not applied to pre-bundled deps in dev, so repeat it
+    // for the esbuild dep optimizer.
+    esbuildOptions: {
+      define: {
+        global: "globalThis",
+        "process.browser": "true",
+      },
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

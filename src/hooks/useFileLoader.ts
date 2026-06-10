@@ -227,8 +227,39 @@ async function parseGeoTIFF(path: string): Promise<{ dataUrl: string; coordinate
 async function processGeoTIFFBuffer(buffer: ArrayBuffer) {
   const tiff = await GeoTIFF.fromArrayBuffer(buffer);
   const image = await tiff.getImage();
+
+  // The map only understands geographic WGS84 — a projected GeoTIFF would
+  // have its meter coordinates read as lng/lat and land nowhere near the
+  // right place (or break the view entirely). Fail with guidance instead.
+  const geoKeys = image.getGeoKeys?.() ?? {};
+  const projectedEpsg = geoKeys.ProjectedCSTypeGeoKey;
+  const geographicEpsg = geoKeys.GeographicTypeGeoKey;
+  if (projectedEpsg && projectedEpsg !== 4326) {
+    throw new Error(
+      `This GeoTIFF uses a projected coordinate system (EPSG:${projectedEpsg}). ` +
+        `Only geographic WGS84 (EPSG:4326) is supported — reproject it first, ` +
+        `e.g. gdalwarp -t_srs EPSG:4326 input.tif output.tif`
+    );
+  }
+  if (geographicEpsg && geographicEpsg !== 4326) {
+    throw new Error(
+      `This GeoTIFF uses EPSG:${geographicEpsg}. Only WGS84 (EPSG:4326) is supported — ` +
+        `reproject it first, e.g. gdalwarp -t_srs EPSG:4326 input.tif output.tif`
+    );
+  }
+
   const bbox = image.getBoundingBox();
   const [minLng, minLat, maxLng, maxLat] = bbox;
+
+  // No (or user-defined) geokeys: sanity-check that the bounds are plausible
+  // longitude/latitude before drawing.
+  if (minLng < -180 || maxLng > 180 || minLat < -90 || maxLat > 90) {
+    throw new Error(
+      `This GeoTIFF's bounds (${minLng.toFixed(1)}, ${minLat.toFixed(1)}) – ` +
+        `(${maxLng.toFixed(1)}, ${maxLat.toFixed(1)}) are not valid longitude/latitude. ` +
+        `It is likely in a projected coordinate system — reproject to EPSG:4326 first.`
+    );
+  }
   const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
     [minLng, maxLat], // NW
     [maxLng, maxLat], // NE
@@ -295,32 +326,34 @@ export function useFileLoader() {
       
       if (ext === "zip") {
         const buffer = await file.arrayBuffer();
+        // Try FGDB first; a non-FGDB zip makes it throw (or yield no layers),
+        // in which case the zip is treated as a shapefile archive.
+        let fgdbResult: Record<string, FeatureCollection> | null = null;
         try {
-          // Try FGDB first
-          const fgdbResult = await parseFGDBBuffer(buffer);
-          if (fgdbResult && Object.keys(fgdbResult).length > 0) {
-            const layers = Object.entries(fgdbResult).map(([name, fc]) => {
-              const layer = processVectorLayer(fc, name, file.name);
-              addLayer(layer);
-              return layer;
-            });
-            return layers;
-          }
-        } catch (e) {
-          // Fallback to SHP
-          const result = await shp(buffer);
-          if (Array.isArray(result)) {
-            const layers = result.map((fc: FeatureCollection) => {
-              const layer = processVectorLayer(fc, file.name.replace(/\.[^.]+$/, ""), file.name);
-              addLayer(layer);
-              return layer;
-            });
-            return layers;
-          } else {
-            const layer = processVectorLayer(result as FeatureCollection, file.name.replace(/\.[^.]+$/, ""), file.name);
+          fgdbResult = await parseFGDBBuffer(buffer);
+        } catch {
+          fgdbResult = null;
+        }
+        if (fgdbResult && Object.keys(fgdbResult).length > 0) {
+          const layers = Object.entries(fgdbResult).map(([name, fc]) => {
+            const layer = processVectorLayer(fc, name, file.name);
             addLayer(layer);
             return layer;
-          }
+          });
+          return layers;
+        }
+        const result = await shp(buffer);
+        if (Array.isArray(result)) {
+          const layers = result.map((fc: FeatureCollection) => {
+            const layer = processVectorLayer(fc, file.name.replace(/\.[^.]+$/, ""), file.name);
+            addLayer(layer);
+            return layer;
+          });
+          return layers;
+        } else {
+          const layer = processVectorLayer(result as FeatureCollection, file.name.replace(/\.[^.]+$/, ""), file.name);
+          addLayer(layer);
+          return layer;
         }
       } else if (ext === "tif" || ext === "tiff") {
         const buffer = await file.arrayBuffer();
@@ -399,31 +432,34 @@ export function useFileLoader() {
       const ext = getFileExtension(filePath);
       
       if (ext === "zip") {
+        // Try FGDB first; a non-FGDB zip makes it throw (or yield no layers),
+        // in which case the zip is treated as a shapefile archive.
+        let fgdbResult: Record<string, FeatureCollection> | null = null;
         try {
-          const fgdbResult = await parseFGDB(filePath);
-          if (fgdbResult && Object.keys(fgdbResult).length > 0) {
-             const layers = Object.entries(fgdbResult).map(([name, fc]) => {
-              const layer = processVectorLayer(fc, name, filePath);
-              addLayer(layer);
-              return layer;
-            });
-            return layers;
-          }
-        } catch(e) {
-          // Fallback to SHP
-          const result = await parseShapefile(filePath);
-          if (Array.isArray(result)) {
-            const layers = result.map((fc: FeatureCollection) => {
-              const layer = processVectorLayer(fc, getFileBasename(filePath), filePath);
-              addLayer(layer);
-              return layer;
-            });
-            return layers;
-          } else {
-             const layer = processVectorLayer(result as FeatureCollection, getFileBasename(filePath), filePath);
-             addLayer(layer);
-             return layer;
-          }
+          fgdbResult = await parseFGDB(filePath);
+        } catch {
+          fgdbResult = null;
+        }
+        if (fgdbResult && Object.keys(fgdbResult).length > 0) {
+          const layers = Object.entries(fgdbResult).map(([name, fc]) => {
+            const layer = processVectorLayer(fc, name, filePath);
+            addLayer(layer);
+            return layer;
+          });
+          return layers;
+        }
+        const result = await parseShapefile(filePath);
+        if (Array.isArray(result)) {
+          const layers = result.map((fc: FeatureCollection) => {
+            const layer = processVectorLayer(fc, getFileBasename(filePath), filePath);
+            addLayer(layer);
+            return layer;
+          });
+          return layers;
+        } else {
+          const layer = processVectorLayer(result as FeatureCollection, getFileBasename(filePath), filePath);
+          addLayer(layer);
+          return layer;
         }
       } else if (ext === "tif" || ext === "tiff") {
         const rasterData = await parseGeoTIFF(filePath);

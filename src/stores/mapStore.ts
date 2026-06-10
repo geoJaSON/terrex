@@ -35,6 +35,38 @@ interface EditEntry {
   newValue: unknown;
 }
 
+// One history step is a group of entries: a batch edit of 10,000 features
+// undoes in a single Ctrl+Z, not 10,000.
+type EditGroup = EditEntry[];
+
+function applyEditEntries(
+  layers: Layer[],
+  entries: EditGroup,
+  key: "oldValue" | "newValue"
+): Layer[] {
+  const byLayer = new Map<string, Map<number, Record<string, unknown>>>();
+  for (const e of entries) {
+    let layerMap = byLayer.get(e.layerId);
+    if (!layerMap) {
+      layerMap = new Map();
+      byLayer.set(e.layerId, layerMap);
+    }
+    const props = layerMap.get(e.featureId) ?? {};
+    props[e.attribute] = e[key];
+    layerMap.set(e.featureId, props);
+  }
+  return layers.map((l) => {
+    const layerMap = byLayer.get(l.id);
+    if (!layerMap) return l;
+    const features = l.data.features.map((f) => {
+      const props = layerMap.get(f.id as number);
+      if (!props) return f;
+      return { ...f, properties: { ...f.properties, ...props } } as Feature<Geometry, GeoJsonProperties>;
+    });
+    return { ...l, data: { ...l.data, features } };
+  });
+}
+
 interface MapState {
   // View
   viewState: ViewState;
@@ -91,7 +123,7 @@ interface MapState {
   updateFeatureProperty: (layerId: string, featureId: number, attr: string, value: unknown) => void;
   batchUpdateFeatureProperty: (layerId: string, featureIds: number[], attr: string, value: unknown) => void;
   batchUpdateFeatureProperties: (layerId: string, featureIdValueMap: Record<number, unknown>, attr: string) => void;
-  editHistory: EditEntry[];
+  editHistory: EditGroup[];
   editHistoryIndex: number;
   undo: () => void;
   redo: () => void;
@@ -105,6 +137,14 @@ interface MapState {
 }
 
 // ── Filter evaluation ──
+// SQL LIKE → RegExp: % is a wildcard, _ matches one character; everything
+// else must be treated literally or user input like "(" throws during render.
+function likeRegExp(filterValue: string): RegExp {
+  const escaped = filterValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = escaped.replace(/%/g, ".*").replace(/_/g, ".");
+  return new RegExp(`^${pattern}$`, "i");
+}
+
 function evaluateCondition(
   value: unknown,
   operator: FilterOperator,
@@ -132,12 +172,9 @@ function evaluateCondition(
     case "<=":
       return bothNumeric ? numVal <= filterNum : strVal <= filterValue;
     case "LIKE":
-      // Simple wildcard: % at start/end
-      const pattern = filterValue.toLowerCase().replace(/%/g, ".*");
-      return new RegExp(`^${pattern}$`, "i").test(strVal);
+      return likeRegExp(filterValue).test(strVal);
     case "NOT LIKE":
-      const patternNot = filterValue.toLowerCase().replace(/%/g, ".*");
-      return !new RegExp(`^${patternNot}$`, "i").test(strVal);
+      return !likeRegExp(filterValue).test(strVal);
     case "IN": {
       const values = filterValue.split(",").map((v) => v.trim().toLowerCase());
       return values.includes(strVal.toLowerCase());
@@ -180,16 +217,29 @@ export const useMapStore = create<MapState>((set, get) => ({
   // Layers
   layers: [],
   activeLayerId: null,
-  addLayer: (layer) => set((state) => ({ layers: [...state.layers, layer], activeLayerId: layer.id })),
+  // New layers go to the front: layers[0] is the top of the layer panel and
+  // renders topmost on the map (see enforceLayerOrder in MapView).
+  addLayer: (layer) => set((state) => ({ layers: [layer, ...state.layers], activeLayerId: layer.id })),
   removeLayer: (id) =>
-    set((state) => ({
-      layers: state.layers.filter((l) => l.id !== id),
-      activeLayerId: state.activeLayerId === id ? null : state.activeLayerId,
-      selectedFeatureIds: state.activeLayerId === id ? new Set() : state.selectedFeatureIds,
-    })),
+    set((state) => {
+      const filters = { ...state.filters };
+      delete filters[id];
+      return {
+        layers: state.layers.filter((l) => l.id !== id),
+        activeLayerId: state.activeLayerId === id ? null : state.activeLayerId,
+        selectedFeatureIds: state.activeLayerId === id ? new Set() : state.selectedFeatureIds,
+        filters,
+      };
+    }),
   toggleLayerVisibility: (id) =>
     set((state) => ({ layers: state.layers.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)) })),
-  setActiveLayer: (id) => set({ activeLayerId: id }),
+  // Selection ids are per-layer feature indices, so a selection from one
+  // layer would silently highlight unrelated features in another.
+  setActiveLayer: (id) =>
+    set((state) => ({
+      activeLayerId: id,
+      selectedFeatureIds: state.activeLayerId === id ? state.selectedFeatureIds : new Set<number>(),
+    })),
   updateLayerStyle: (id, style) =>
     set((state) => ({ layers: state.layers.map((l) => (l.id === id ? { ...l, style: { ...l.style, ...style } } : l)) })),
   reorderLayers: (fromIndex, toIndex) =>
@@ -312,7 +362,10 @@ export const useMapStore = create<MapState>((set, get) => ({
       const layer = state.layers.find((l) => l.id === layerId);
       const feature = layer?.data.features.find((f) => (f.id as number) === featureId);
       const oldValue = feature?.properties?.[attr];
-      const newHistory = [...state.editHistory.slice(0, state.editHistoryIndex + 1), { layerId, featureId, attribute: attr, oldValue, newValue: value }];
+      const newHistory = [
+        ...state.editHistory.slice(0, state.editHistoryIndex + 1),
+        [{ layerId, featureId, attribute: attr, oldValue, newValue: value }],
+      ];
       return { layers, editHistory: newHistory, editHistoryIndex: newHistory.length - 1 };
     });
   },
@@ -329,7 +382,8 @@ export const useMapStore = create<MapState>((set, get) => ({
         });
         return { ...l, data: { ...l.data, features } };
       });
-      const newHistory = [...state.editHistory.slice(0, state.editHistoryIndex + 1), ...entries];
+      if (entries.length === 0) return { layers };
+      const newHistory = [...state.editHistory.slice(0, state.editHistoryIndex + 1), entries];
       return { layers, editHistory: newHistory, editHistoryIndex: newHistory.length - 1 };
     });
   },
@@ -347,41 +401,28 @@ export const useMapStore = create<MapState>((set, get) => ({
         });
         return { ...l, data: { ...l.data, features } };
       });
-      const newHistory = [...state.editHistory.slice(0, state.editHistoryIndex + 1), ...entries];
+      if (entries.length === 0) return { layers };
+      const newHistory = [...state.editHistory.slice(0, state.editHistoryIndex + 1), entries];
       return { layers, editHistory: newHistory, editHistoryIndex: newHistory.length - 1 };
     });
   },
   undo: () => {
     const { editHistory, editHistoryIndex } = get();
     if (editHistoryIndex < 0) return;
-    const entry = editHistory[editHistoryIndex];
-    set((state) => {
-      const layers = state.layers.map((l) => {
-        if (l.id !== entry.layerId) return l;
-        const features = l.data.features.map((f) => {
-          if ((f.id as number) !== entry.featureId) return f;
-          return { ...f, properties: { ...f.properties, [entry.attribute]: entry.oldValue } } as Feature<Geometry, GeoJsonProperties>;
-        });
-        return { ...l, data: { ...l.data, features } };
-      });
-      return { layers, editHistoryIndex: state.editHistoryIndex - 1 };
-    });
+    const group = editHistory[editHistoryIndex];
+    set((state) => ({
+      layers: applyEditEntries(state.layers, group, "oldValue"),
+      editHistoryIndex: state.editHistoryIndex - 1,
+    }));
   },
   redo: () => {
     const { editHistory, editHistoryIndex } = get();
     if (editHistoryIndex >= editHistory.length - 1) return;
-    const entry = editHistory[editHistoryIndex + 1];
-    set((state) => {
-      const layers = state.layers.map((l) => {
-        if (l.id !== entry.layerId) return l;
-        const features = l.data.features.map((f) => {
-          if ((f.id as number) !== entry.featureId) return f;
-          return { ...f, properties: { ...f.properties, [entry.attribute]: entry.newValue } } as Feature<Geometry, GeoJsonProperties>;
-        });
-        return { ...l, data: { ...l.data, features } };
-      });
-      return { layers, editHistoryIndex: state.editHistoryIndex + 1 };
-    });
+    const group = editHistory[editHistoryIndex + 1];
+    set((state) => ({
+      layers: applyEditEntries(state.layers, group, "newValue"),
+      editHistoryIndex: state.editHistoryIndex + 1,
+    }));
   },
 
   // Color

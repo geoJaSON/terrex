@@ -27,6 +27,7 @@ export function ConnectionManager() {
   const [name, setName] = useState("");
   const [type, setType] = useState<ConnectionType>("arcgis_feature");
   const [url, setUrl] = useState("");
+  const [typeNames, setTypeNames] = useState("");
   const [authType, setAuthType] = useState<AuthType>("none");
   
   // Ephemeral credentials (not saved)
@@ -81,6 +82,7 @@ export function ConnectionManager() {
       type,
       url,
       authType,
+      ...(type === "wfs" && typeNames.trim() ? { typeNames: typeNames.trim() } : {}),
     };
 
     try {
@@ -93,7 +95,7 @@ export function ConnectionManager() {
       if (creds) setCachedCredentials(conn.id, creds);
       setActiveTab("saved");
       // Reset form
-      setName(""); setUrl(""); setAuthType("none");
+      setName(""); setUrl(""); setTypeNames(""); setAuthType("none");
       setUsername(""); setPassword(""); setToken("");
     } catch (err: any) {
       setError(err.message || "Connection test failed.");
@@ -262,7 +264,21 @@ export function ConnectionManager() {
                 <label className="modal__label">Service URL</label>
                 <input className="edit-panel__field-input" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://..." />
               </div>
-              
+              {type === "wfs" && (
+                <div className="modal__field">
+                  <label className="modal__label">Feature Type (optional)</label>
+                  <input
+                    className="edit-panel__field-input"
+                    value={typeNames}
+                    onChange={e => setTypeNames(e.target.value)}
+                    placeholder="e.g. namespace:layername"
+                  />
+                  <div style={{ fontSize: "10px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                    Leave empty to auto-detect — works when the service has exactly one feature type.
+                  </div>
+                </div>
+              )}
+
               <div style={{ borderTop: "1px solid var(--border-subtle)", margin: "1rem 0", paddingTop: "1rem" }}>
                 <div className="modal__field">
                   <label className="modal__label">Authentication</label>

@@ -61,6 +61,54 @@ async function backendFetch(
   return { ok: res.ok, status: res.status, text: () => body };
 }
 
+// Shoelace sum over a ring; positive = clockwise in ESRI's convention
+// (outer rings are clockwise, holes counterclockwise).
+function ringIsClockwise(ring: number[][]): boolean {
+  let total = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    total += (ring[i + 1][0] - ring[i][0]) * (ring[i + 1][1] + ring[i][1]);
+  }
+  return total >= 0;
+}
+
+// Ray-casting point-in-ring test, used to assign holes to their outer ring.
+function pointInRing(point: number[], ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > point[1] !== yj > point[1] && point[0] < ((xj - xi) * (point[1] - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// ESRI rings → Polygon / MultiPolygon, classifying outer rings vs. holes by
+// winding order and assigning each hole to the outer ring that contains it.
+function esriRingsToGeoJSON(rings: number[][][]): Geometry {
+  const outers: number[][][][] = [];
+  const holes: number[][][] = [];
+  for (const ring of rings) {
+    if (ringIsClockwise(ring)) outers.push([ring]);
+    else holes.push(ring);
+  }
+  // Malformed data with no clockwise ring: treat every ring as an outer.
+  if (outers.length === 0) {
+    return rings.length === 1
+      ? { type: "Polygon", coordinates: rings }
+      : { type: "MultiPolygon", coordinates: rings.map((r) => [r]) };
+  }
+  for (const hole of holes) {
+    const container =
+      outers.find((poly) => pointInRing(hole[0], poly[0])) ?? outers[0];
+    container.push(hole);
+  }
+  return outers.length === 1
+    ? { type: "Polygon", coordinates: outers[0] }
+    : { type: "MultiPolygon", coordinates: outers };
+}
+
 /**
  * Standardize an ArcGIS feature array into GeoJSON FeatureCollection
  */
@@ -70,20 +118,22 @@ function arcgisToGeoJSON(arcgisData: any): FeatureCollection<Geometry, GeoJsonPr
     return arcgisData as FeatureCollection;
   }
 
-  // If the server returns ESRI JSON
+  // ESRI JSON fallback for servers without f=geojson support.
   const features = (arcgisData.features || []).map((f: any, i: number) => {
     let geom: Geometry | null = null;
-    
-    // Very naive ESRI geometry to GeoJSON conversion.
-    // In production, better to use @esri/arcgis-to-geojson-utils, 
-    // but requesting f=geojson from ArcGIS Server usually avoids this.
+
     if (f.geometry) {
       if (f.geometry.x !== undefined) {
         geom = { type: "Point", coordinates: [f.geometry.x, f.geometry.y] };
+      } else if (f.geometry.points) {
+        geom = { type: "MultiPoint", coordinates: f.geometry.points };
       } else if (f.geometry.rings) {
-        geom = { type: "Polygon", coordinates: f.geometry.rings };
+        geom = esriRingsToGeoJSON(f.geometry.rings);
       } else if (f.geometry.paths) {
-        geom = { type: "LineString", coordinates: f.geometry.paths[0] };
+        geom =
+          f.geometry.paths.length === 1
+            ? { type: "LineString", coordinates: f.geometry.paths[0] }
+            : { type: "MultiLineString", coordinates: f.geometry.paths };
       }
     }
 
@@ -104,6 +154,29 @@ function arcgisToGeoJSON(arcgisData: any): FeatureCollection<Geometry, GeoJsonPr
  * fall back to sending an Authorization: Basic header.
  */
 class TokenEndpointUnavailable extends Error {}
+
+/**
+ * List the feature type names a WFS advertises in its GetCapabilities
+ * document. Used to fill in the mandatory GetFeature `typeNames` parameter
+ * when the connection doesn't specify one.
+ */
+async function discoverWfsTypeNames(
+  url: string,
+  headers: Record<string, string>
+): Promise<string[]> {
+  const capsUrl = new URL(url);
+  capsUrl.searchParams.set("service", "WFS");
+  capsUrl.searchParams.set("request", "GetCapabilities");
+  const res = await backendFetch(capsUrl.toString(), { headers });
+  if (!res.ok) return [];
+  const xml = res.text();
+  const names: string[] = [];
+  const featureTypeRe = /<(?:\w+:)?FeatureType[\s>][\s\S]*?<(?:\w+:)?Name[^>]*>([^<]+)<\/(?:\w+:)?Name>/g;
+  for (const m of xml.matchAll(featureTypeRe)) {
+    names.push(m[1].trim());
+  }
+  return names;
+}
 
 /**
  * Resolve the generateToken endpoint for a given service URL.
@@ -438,6 +511,35 @@ export async function fetchOnlineLayer(
         finalUrl.searchParams.set("version", "2.0.0");
       }
       finalUrl.searchParams.set("outputFormat", "application/json");
+
+      // GetFeature requires a feature type. Use the connection's, or the
+      // URL's, or auto-discover when the service has exactly one.
+      const urlHasTypeNames = [...finalUrl.searchParams.keys()].some((k) =>
+        /^typenames?$/i.test(k)
+      );
+      if (!urlHasTypeNames) {
+        let typeNames = connection.typeNames?.trim();
+        if (!typeNames) {
+          const available = await discoverWfsTypeNames(url, headers);
+          if (available.length === 1) {
+            typeNames = available[0];
+          } else if (available.length > 1) {
+            throw new Error(
+              `This WFS serves ${available.length} feature types — specify one in the connection's ` +
+                `Feature Type field. Available: ${available.slice(0, 10).join(", ")}` +
+                (available.length > 10 ? ", …" : "")
+            );
+          } else {
+            throw new Error(
+              "WFS GetFeature requires a feature type, and none could be discovered from " +
+                "GetCapabilities. Set the connection's Feature Type field (e.g. namespace:layername)."
+            );
+          }
+        }
+        // typeNames is WFS 2.0; typeName keeps 1.x servers working.
+        finalUrl.searchParams.set("typeNames", typeNames);
+        finalUrl.searchParams.set("typeName", typeNames);
+      }
 
       const res = await backendFetch(finalUrl.toString(), { headers });
       const dataText = res.text();

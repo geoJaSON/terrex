@@ -32,8 +32,18 @@ export async function exportToCSV(layer: Layer, data?: ExportData): Promise<void
   });
   if (!path) return;
 
-  // Flatten features to rows
-  const rows = (data ?? layer.data).features.map((f) => ({ ...f.properties }));
+  // Flatten features to rows. Point coordinates are written as columns —
+  // the CSV importer strips lat/lng columns into geometry, so omitting them
+  // here would lose the coordinates on a CSV → CSV round trip.
+  const rows = (data ?? layer.data).features.map((f) => {
+    const row: Record<string, unknown> = { ...f.properties };
+    if (f.geometry?.type === "Point") {
+      const [lng, lat] = f.geometry.coordinates;
+      if (!("longitude" in row)) row.longitude = lng;
+      if (!("latitude" in row)) row.latitude = lat;
+    }
+    return row;
+  });
   const content = Papa.unparse(rows);
   await invoke("write_file", { path, content });
 }

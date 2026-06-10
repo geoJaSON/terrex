@@ -81,13 +81,17 @@ function ToolParamDialog({ operation, layer, onClose }: ToolParamDialogProps) {
         case "buffer":
           result = turf.buffer(data, bufferRadius, { units: bufferUnit }) ?? null;
           break;
-        case "dissolve":
+        case "dissolve": {
           if (layer.geometryType !== "Polygon" && layer.geometryType !== "MultiPolygon") {
             alert("Dissolve only works on polygon layers.");
             return;
           }
-          result = turf.dissolve(data as any, { propertyName: dissolveProperty });
+          // turf.dissolve only accepts Polygon features; MultiPolygons
+          // (the common case for shapefile data) must be flattened first.
+          const flattened = turf.flatten(data as any);
+          result = turf.dissolve(flattened as any, { propertyName: dissolveProperty || undefined });
           break;
+        }
         case "envelope":
           result = turf.envelope(data);
           break;

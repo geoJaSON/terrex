@@ -30,7 +30,7 @@ function App() {
   // as the file dialog. No-op outside Tauri (e.g. browser `npm run dev`).
   useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
-    const SUPPORTED = ["geojson", "json", "zip", "kml", "csv"];
+    const SUPPORTED = ["geojson", "json", "zip", "kml", "csv", "tif", "tiff"];
     let unlisten: (() => void) | undefined;
 
     getCurrentWebview()
@@ -155,7 +155,7 @@ function App() {
             Drop to load
           </div>
           <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)" }}>
-            GeoJSON · Shapefile (.zip) · KML · CSV
+            GeoJSON · Shapefile/FGDB (.zip) · KML · CSV · GeoTIFF
           </div>
         </div>
       )}

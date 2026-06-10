@@ -10,6 +10,10 @@ export interface SavedConnection {
   type: ConnectionType;
   url: string;
   authType: AuthType;
+  // WFS only: feature type for GetFeature (e.g. "namespace:layername").
+  // Optional — auto-discovered from GetCapabilities when the service
+  // advertises exactly one feature type.
+  typeNames?: string;
 }
 
 interface ConnectionState {
@@ -48,6 +52,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       type: conn.type,
       url: conn.url,
       authType: conn.authType,
+      ...(conn.typeNames ? { typeNames: conn.typeNames } : {}),
     };
 
     if (existing >= 0) {

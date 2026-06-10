@@ -20,14 +20,16 @@ Geometry editing is still on the todo list.
     `lon`/`lng`/`longitude`/`x`, and common variants) and become point layers.
   - Shapefiles and FGDBs are detected automatically from `.zip` — FGDB is tried
     first and each layer in the geodatabase loads as a separate map layer.
-  - GeoTIFF files are rendered as georeferenced image overlays on the map.
+  - GeoTIFF files are rendered as georeferenced image overlays on the map
+    (EPSG:4326 / WGS84 only — reproject projected rasters first).
   - Native drag-and-drop: drop supported files anywhere on the window.
 - **Online services** via the Connection Manager:
   - **ArcGIS Feature Layers** — ArcGIS Online and Enterprise/Server, with
     automatic token exchange (referer-bound tokens) and a fallback to HTTP
     Basic / web-tier auth. Large layers are paged past the service's
     `maxRecordCount` automatically.
-  - **WFS** (`GetFeature`, GeoJSON output).
+  - **WFS** (`GetFeature`, GeoJSON output) — the feature type can be set on
+    the connection, or is auto-detected when the service has exactly one.
   - **GeoJSON URL** — any HTTP(S) endpoint returning a FeatureCollection.
   - Saved connections with cached credentials. All network requests go
     through the Rust backend, so there are no CORS limitations and the
@@ -38,8 +40,8 @@ Geometry editing is still on the todo list.
 - **Layer panel** (left sidebar) — toggle visibility, reorder by dragging,
   right-click context menu: zoom to extent, open attribute table, zoom to
   selection, refresh (online layers), hide/show, export, and remove.
-- **Symbology editor** — click the color swatch on any layer to edit fill
-  color, opacity, stroke color/width, and point radius.
+- **Symbology editor** — click the color swatch on any layer to edit color,
+  opacity, stroke width, and point radius.
 - **Active layer** — click a layer to make it active; the attribute table,
   filter bar, and geoprocessing tools all operate on the active layer.
 
@@ -61,8 +63,8 @@ Geometry editing is still on the todo list.
 - **Attribute table** — virtualized table that handles large datasets without
   performance loss. Resize it by dragging the divider, double-click the divider
   to close.
-- **Per-column statistics** — click any column header to see min, max, mean,
-  and unique values.
+- **Per-column statistics** — right-click any column header to see min, max,
+  mean, median, and top values (click toggles sorting).
 - **Selection** — click rows or use Select All / Select Filtered; zoom to
   selected features; selections carry through to export and batch edit.
 - **Query / filter bar** — build multi-condition attribute filters (=, !=, >,
@@ -76,7 +78,7 @@ Geometry editing is still on the todo list.
 - **Batch edit** — assign a constant value to a field across all selected or
   filtered features.
 - **Field calculator** — write JavaScript expressions referencing field names
-  (e.g. `{POPULATION} / {AREA}`) with a live preview; applies to selected or
+  (e.g. `[POPULATION] / [AREA]`) with a live preview; applies to selected or
   filtered features.
 - **Undo / redo** — full edit history for attribute changes.
 

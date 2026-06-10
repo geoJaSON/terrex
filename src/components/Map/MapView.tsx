@@ -30,6 +30,9 @@ const BASEMAPS: Record<string, any> = {
           "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
         ],
         tileSize: 256,
+        // Esri World Imagery tops out around z19; declaring it on the source
+        // lets the renderer overzoom instead of requesting missing tiles.
+        maxzoom: 19,
         attribution: "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
       }
     },
@@ -37,9 +40,7 @@ const BASEMAPS: Record<string, any> = {
       {
         id: "satellite-layer",
         type: "raster",
-        source: "satellite-tiles",
-        minzoom: 0,
-        maxzoom: 20
+        source: "satellite-tiles"
       }
     ]
   }
@@ -116,79 +117,75 @@ function formatArea(sqMeters: number, unit: MeasureUnit): string {
 
 function getLayerIds(layer: Layer): string[] {
   const baseId = `layer-${layer.id}`;
-  if (layer.geometryType === "Polygon" || layer.geometryType === "MultiPolygon") {
-    return [`${baseId}-fill`, `${baseId}-stroke`];
-  } else if (layer.geometryType === "LineString" || layer.geometryType === "MultiLineString") {
-    return [`${baseId}-line`];
-  } else {
-    return [`${baseId}-circle`];
+  if (layer.geometryType === "Raster") {
+    return [`${baseId}-raster`];
   }
+  return [`${baseId}-fill`, `${baseId}-stroke`, `${baseId}-line`, `${baseId}-circle`];
 }
 
 function getMapLayerConfig(layer: Layer, selectedIds: Set<number>) {
   const baseId = `layer-${layer.id}`;
-  const layers = [];
   const hasSelection = selectedIds.size > 0;
+  // Hidden layers stay mounted with visibility:none — unmounting them would
+  // re-add them on top of the stack when re-shown, scrambling z-order.
+  const layout = { visibility: (layer.visible ? "visible" : "none") as "visible" | "none" };
 
-  if (layer.geometryType === "Polygon" || layer.geometryType === "MultiPolygon") {
-    layers.push({
+  const selected = (then: unknown, otherwise: unknown) =>
+    hasSelection
+      ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], then, otherwise]
+      : otherwise;
+
+  // Every vector layer gets all sub-layers, each filtered by geometry type
+  // (["geometry-type"] collapses Multi* into the base type). Layers from KML
+  // and similar sources routinely mix points, lines, and polygons; rendering
+  // only the first feature's type would hide the rest.
+  return [
+    {
       id: `${baseId}-fill`,
       type: "fill" as const,
+      filter: ["==", ["geometry-type"], "Polygon"],
+      layout,
       paint: {
-        "fill-color": hasSelection
-          ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], "#fbbf24", layer.style.color]
-          : layer.style.color,
+        "fill-color": selected("#fbbf24", layer.style.color),
         "fill-opacity": layer.style.opacity * 0.3,
       },
-    });
-    layers.push({
+    },
+    {
       id: `${baseId}-stroke`,
       type: "line" as const,
+      filter: ["==", ["geometry-type"], "Polygon"],
+      layout,
       paint: {
-        "line-color": hasSelection
-          ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], "#fbbf24", layer.style.strokeColor]
-          : layer.style.strokeColor,
-        "line-width": hasSelection
-          ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], layer.style.strokeWidth + 1.5, layer.style.strokeWidth]
-          : layer.style.strokeWidth,
+        "line-color": selected("#fbbf24", layer.style.strokeColor),
+        "line-width": selected(layer.style.strokeWidth + 1.5, layer.style.strokeWidth),
         "line-opacity": layer.style.opacity,
       },
-    });
-  } else if (layer.geometryType === "LineString" || layer.geometryType === "MultiLineString") {
-    layers.push({
+    },
+    {
       id: `${baseId}-line`,
       type: "line" as const,
+      filter: ["==", ["geometry-type"], "LineString"],
+      layout,
       paint: {
-        "line-color": hasSelection
-          ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], "#fbbf24", layer.style.color]
-          : layer.style.color,
-        "line-width": hasSelection
-          ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], layer.style.strokeWidth + 2, layer.style.strokeWidth]
-          : layer.style.strokeWidth,
+        "line-color": selected("#fbbf24", layer.style.color),
+        "line-width": selected(layer.style.strokeWidth + 2, layer.style.strokeWidth),
         "line-opacity": layer.style.opacity,
       },
-    });
-  } else {
-    layers.push({
+    },
+    {
       id: `${baseId}-circle`,
       type: "circle" as const,
+      filter: ["==", ["geometry-type"], "Point"],
+      layout,
       paint: {
-        "circle-color": hasSelection
-          ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], "#fbbf24", layer.style.color]
-          : layer.style.color,
-        "circle-radius": hasSelection
-          ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], layer.style.pointRadius + 3, layer.style.pointRadius]
-          : layer.style.pointRadius,
+        "circle-color": selected("#fbbf24", layer.style.color),
+        "circle-radius": selected(layer.style.pointRadius + 3, layer.style.pointRadius),
         "circle-opacity": layer.style.opacity,
-        "circle-stroke-color": hasSelection
-          ? ["case", ["in", ["id"], ["literal", Array.from(selectedIds)]], "#fbbf24", layer.style.strokeColor]
-          : layer.style.strokeColor,
+        "circle-stroke-color": selected("#fbbf24", layer.style.strokeColor),
         "circle-stroke-width": 1.5,
       },
-    });
-  }
-
-  return layers;
+    },
+  ];
 }
 
 export function MapView() {
@@ -386,7 +383,32 @@ export function MapView() {
     setToast("🧹 Cleared all map assets");
   }, []);
 
-  const visibleLayers = layers.filter((l) => l.visible);
+  // ── Z-order enforcement ──
+  // react-map-gl only positions a style layer when it is added, so panel
+  // reorders (and re-added layers after a basemap switch) need an explicit
+  // pass: walk the stack bottom→top and raise each layer to the top. Only
+  // moves when the current order differs, so the styledata events emitted by
+  // moveLayer itself can't re-trigger an endless loop.
+  const enforceLayerOrder = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !map.style) return;
+    // layers[0] is the top of the layer panel and should render topmost.
+    const desiredBottomToTop: string[] = [];
+    for (let i = layers.length - 1; i >= 0; i--) {
+      for (const id of getLayerIds(layers[i])) {
+        if (map.getLayer(id)) desiredBottomToTop.push(id);
+      }
+    }
+    const currentOrder = map.getLayersOrder().filter((id) => desiredBottomToTop.includes(id));
+    if (currentOrder.join("\n") === desiredBottomToTop.join("\n")) return;
+    for (const id of desiredBottomToTop) {
+      map.moveLayer(id); // no beforeId → move to top
+    }
+  }, [layers]);
+
+  useEffect(() => {
+    enforceLayerOrder();
+  }, [enforceLayerOrder]);
 
   // Compute live geodesic distance & area measurements
   let totalDistance = 0;
@@ -436,13 +458,14 @@ export function MapView() {
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
+        onStyleData={enforceLayerOrder}
         cursor={measureMode ? "crosshair" : undefined}
         mapStyle={BASEMAPS[currentBasemap]}
         style={{ width: "100%", height: "100%" }}
       >
         <NavigationControl position="top-right" showCompass showZoom />
 
-        {visibleLayers.map((layer) => {
+        {layers.map((layer) => {
           const isActive = layer.id === activeLayerId;
           const selIds = isActive ? selectedFeatureIds : new Set<number>();
           
@@ -458,6 +481,7 @@ export function MapView() {
                 <MapLayer
                   id={`layer-${layer.id}-raster`}
                   type="raster"
+                  layout={{ visibility: layer.visible ? "visible" : "none" }}
                   paint={{ "raster-opacity": layer.style.opacity }}
                 />
               </Source>
@@ -472,7 +496,6 @@ export function MapView() {
               id={`source-${layer.id}`}
               type="geojson"
               data={displayData}
-              promoteId={""}
             >
               {getMapLayerConfig(layer, selIds).map((layerConfig) => (
                 <MapLayer key={layerConfig.id} {...(layerConfig as any)} />
